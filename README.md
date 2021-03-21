@@ -1,1 +1,97 @@
 # channels_postgres
+
+A Django Channels channel layer that uses PostgreSQL as its backing store
+
+## Installation
+
+pip install channels_postgres
+
+python manage.py migrate channels_postgres  # Creates internal tables
+
+## Usage
+
+Set up the channel layer in your Django settings file like so:
+
+```python
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_postgres.core.PostgresChannelLayer',
+        'CONFIG': {
+            'ENGINE': 'django.db.backends.postgresql_psycopg2',
+            'NAME': 'postgres',
+            'USER': 'postgres',
+            'PASSWORD': 'password',
+            'HOST': '127.0.0.1',
+            'PORT': '5432',
+        },
+    },
+}
+```
+
+The Config object is exactly the same as the standard config object for Django's PostgreSQL database. See the django documentation for more information.
+
+Extra config params are described below:
+
+### prefix
+
+Prefix to add to all database group keys. Defaults to asgi:. In most cases, you don't need to change this setting because it's only used internally.
+
+### expiry
+
+Message expiry in seconds. Defaults to 60. You generally shouldn't need to change this, but you may want to turn it down if you have peaky traffic you wish to drop, or up if you have peaky traffic you want to backlog until you get to it.
+group_expiry
+
+### Group expiry
+
+Defaults to 0.
+
+`0 means disabled!` 
+
+Channels will be removed from the group after this amount of time; it's recommended you reduce it for a healthier system that encourages disconnections. This value should not be lower than the relevant timeouts in the interface server (e.g. the --websocket_timeout to daphne).
+capacity
+
+### symmetric_encryption_keys
+
+Pass this to enable the optional symmetric encryption mode of the backend. To use it, make sure you have the cryptography package installed, or specify the cryptography extra when you install channels_redis:
+
+pip install channels_redis[cryptography]
+
+symmetric_encryption_keys should be a list of strings, with each string being an encryption key. The first key is always used for encryption; all are considered for decryption, so you can rotate keys without downtime - just add a new key at the start and move the old one down, then remove the old one after the message expiry time has passed.
+
+Data is encrypted both on the wire and at rest in Postgres, though we advise you also route your Postgres connections over TLS for higher security.
+
+Keys should have at least 32 bytes of entropy - they are passed through the SHA256 hash function before being used as an encryption key. Any string will work, but the shorter the string, the easier the encryption is to break.
+
+If you're using Django, you may also wish to set this to your site's SECRET_KEY setting via the CHANNEL_LAYERS setting:
+
+```python
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.PostgresChannelLayer',
+        'CONFIG': {
+            ...,
+            'symmetric_encryption_keys': [SECRET_KEY],
+        },
+    },
+}
+```
+
+## Deviations from the channels spec
+
+### group_expiry
+
+Defaults to 0 (which means disabled). This option is tied too closely to `daphne` (The official ASGI interface server for `django-channels`). It makes no sense if you're using an alternate `ASGI` server (like `Uvicorn`) which doesn't disconnect WebSockets automatically.
+
+Setting it to a non zero value enables the expected behaviour.
+
+### channel_capacity
+
+RDMS' like `PostgreSQL` were specifically built to handle huge amounts of data without crashing down and using too much memory. Hence, there's no channel capacity.
+
+Your database should be able to handle thousands of messages with ease. If you're still worried about the database table growing out of hand, you can reduce the `expiry` time of the individual messages so they will be purged if a consumer cannot process them on time.
+
+Once a channel is at capacity, it will refuse more messages. How this affects different parts of the system varies; a HTTP server will refuse connections, for example, while Django sending a response will just wait until there's space.
+
+## Dependencies
+
+Python >= 3.6 is required for `channels_postgres`

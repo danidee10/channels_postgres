@@ -16,7 +16,6 @@ test_requires = crypto_requires + [
     'async-timeout',
 ]
 
-
 setup(
     name='channels_postgres',
     version=__version__,

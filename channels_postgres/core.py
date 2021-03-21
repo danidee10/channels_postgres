@@ -6,17 +6,12 @@ from django.db.backends.postgresql.base import DatabaseWrapper
 
 import aiopg
 import msgpack
-import psycopg2
-
-from channels.exceptions import ChannelFull
 from channels.layers import BaseChannelLayer
 
 from .db import DatabaseLayer
 
 
 logger = logging.getLogger(__name__)
-
-
 pool = None
 creating_pool = False
 
@@ -36,9 +31,12 @@ class PostgresChannelLayer(BaseChannelLayer):
     """
 
     def __init__(
-        self, prefix='asgi', symmetric_encryption_keys=None, **kwargs
+        self, prefix='asgi', expiry=60, group_expiry=0,
+        symmetric_encryption_keys=None, **kwargs
     ):
         self.prefix = prefix
+        self.expiry = expiry
+        self.group_expiry = group_expiry
         self.client_prefix = uuid.uuid4().hex[:5]
         self._setup_encryption(symmetric_encryption_keys)
 
@@ -96,38 +94,46 @@ class PostgresChannelLayer(BaseChannelLayer):
         assert self.valid_channel_name(channel), "Channel name not valid"
         # Make sure the message does not contain reserved keys
         assert "__asgi_channel__" not in message
-        # If it's a process-local channel,
-        # strip off local part and stick full name in message
-        # channel_non_local_name = channel
-        if "!" in channel:
-            message = dict(message.items())
-            message["__asgi_channel__"] = channel
-            # channel_non_local_name = self.non_local_name(channel)
-        # Write out message into expiring key (avoids big items in list)
-        # channel_key = self.prefix + channel_non_local_name
         message = self.serialize(message)
 
-        await self.django_db.send_on_channel(channel, message)
+        await self.django_db.send_to_channel([channel], message, self.expiry)
 
     async def _get_message_from_channel(self, channel):
         retrieve_events_sql = f'LISTEN "{channel}";'
+        retrieve_queued_messages_sql = """
+                DELETE FROM channels_postgres_message
+                WHERE id = (
+                    SELECT id
+                    FROM channels_postgres_message
+                    WHERE channel=%s
+                    ORDER BY id
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                    )
+                RETURNING message;
+            """
 
         pool = await self.get_pool()
         with await pool as conn:
             cur = await conn.cursor()
-            await cur.execute(retrieve_events_sql)
-
-            event = await conn.notifies.get()
-            message_id = event.payload
-
-            retrieve_message_sql = (
-                'SELECT message from channels_postgres_message '
-                'WHERE id=%s'
-            )
-            await cur.execute(retrieve_message_sql, (message_id,))
+            await cur.execute(retrieve_queued_messages_sql, (channel,))
             message = await cur.fetchone()
+
+            if not message:
+                await cur.execute(retrieve_events_sql)
+
+                event = await conn.notifies.get()
+                message_id = event.payload
+
+                retrieve_message_sql = (
+                    'DELETE FROM channels_postgres_message '
+                    'WHERE id=%s RETURNING message;'
+                )
+                await cur.execute(retrieve_message_sql, (message_id,))
+                message = await cur.fetchone()
+                await cur.execute(f'UNLISTEN "{channel}";')
+
             message = self.deserialize(message[0])
-            await cur.execute(f'UNLISTEN "{channel}";')
 
             return message
 
@@ -143,6 +149,15 @@ class PostgresChannelLayer(BaseChannelLayer):
             assert real_channel.endswith(
                 self.client_prefix + '!'
             ), 'Wrong client prefix'
+
+        # Delete expired groups (if enabled) and messages
+        if self.group_expiry > 0:
+            asyncio.create_task(
+                self.django_db.delete_expired_groups(self.group_expiry)
+            )
+        asyncio.create_task(
+            self.django_db.delete_expired_messages(self.expiry)
+        )
 
         return await self._get_message_from_channel(channel)
 
@@ -180,7 +195,9 @@ class PostgresChannelLayer(BaseChannelLayer):
     async def group_add(self, group, channel):
         """Adds the channel name to a group to the Postgres table."""
         group_key = self._group_key(group)
-        await self.django_db.add_channel_to_group(group_key, channel)
+        await self.django_db.add_channel_to_group(
+            group_key, channel, self.group_expiry
+        )
 
     async def group_discard(self, group, channel):
         """
@@ -202,7 +219,7 @@ class PostgresChannelLayer(BaseChannelLayer):
     async def group_send(self, group, message):
         """Sends a message to the entire group."""
         assert self.valid_group_name(group), "Group name not valid"
-        
+
         group_key = self._group_key(group)
         # Retrieve list of all channel names related to the group
         message = self.serialize(message)
@@ -210,10 +227,9 @@ class PostgresChannelLayer(BaseChannelLayer):
             group_key
         )
 
-        for group_channel in group_channels:
-            await self.django_db.send_on_channel(
-                group_channel.channel, message
-            )
+        await self.django_db.send_to_channel(
+            group_channels, message, self.expiry
+        )
 
     def _group_key(self, group):
         """Common function to make the storage key for the group."""
