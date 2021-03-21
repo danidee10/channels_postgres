@@ -1,8 +1,6 @@
 # channels_postgres
 
-[![Tests](https://github.com/danidee10/channels_postgres/actions/workflows/tests.yml/badge.svg)](https://github.com/danidee10/channels_postgres/actions/workflows/tests.yml)
-
-[![channels_postgres test](https://img.shields.io/pypi/v/channels_postgres.svg)](https://pypi.python.org/pypi/channels_postgres)
+[![Tests](https://github.com/danidee10/channels_postgres/actions/workflows/tests.yml/badge.svg)](https://github.com/danidee10/channels_postgres/actions/workflows/tests.yml) [![channels_postgres pypi](https://img.shields.io/pypi/v/channels_postgres.svg)](https://pypi.python.org/pypi/channels_postgres)
 
 
 A Django Channels channel layer that uses PostgreSQL as its backing store

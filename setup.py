@@ -1,11 +1,9 @@
-from os.path import dirname, join
+from os import path
 
 from setuptools import find_packages, setup
 
 from channels_postgres import __version__
 
-
-readme = open(join(dirname(__file__), 'README.md')).read()
 
 crypto_requires = ['cryptography>=1.3.0']
 
@@ -16,6 +14,10 @@ test_requires = crypto_requires + [
     'async-timeout',
 ]
 
+this_directory = path.abspath(path.dirname(__file__))
+with open(path.join(this_directory, 'README.md'), encoding='utf-8') as f:
+    long_description = f.read()
+
 setup(
     name='channels_postgres',
     version=__version__,
@@ -23,7 +25,8 @@ setup(
     author='Daniel Osaetin',
     author_email='f805nqs6j@relay.firefox.com',
     description='PostgreSQL-backed ASGI channel layer implementation',
-    long_description=readme,
+    long_description=long_description,
+    long_description_content_type='text/markdown',
     license='BSD',
     zip_safe=False,
     packages=find_packages(exclude=['tests']),

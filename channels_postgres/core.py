@@ -1,3 +1,4 @@
+import sys
 import uuid
 import asyncio
 import logging
@@ -10,6 +11,11 @@ from channels.layers import BaseChannelLayer
 
 from .db import DatabaseLayer
 
+
+if sys.version_info < (3, 7):
+    create_task = asyncio.get_event_loop().create_task
+else:
+    from asyncio import create_task
 
 logger = logging.getLogger(__name__)
 pool = None
@@ -152,12 +158,9 @@ class PostgresChannelLayer(BaseChannelLayer):
 
         # Delete expired groups (if enabled) and messages
         if self.group_expiry > 0:
-            asyncio.create_task(
-                self.django_db.delete_expired_groups(self.group_expiry)
-            )
-        asyncio.create_task(
-            self.django_db.delete_expired_messages(self.expiry)
-        )
+            create_task(self.django_db.delete_expired_groups(self.group_expiry))
+
+        create_task(self.django_db.delete_expired_messages(self.expiry))
 
         return await self._get_message_from_channel(channel)
 
