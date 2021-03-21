@@ -7,9 +7,11 @@ A Django Channels channel layer that uses PostgreSQL as its backing store
 
 ## Installation
 
+```bash
 pip install channels_postgres
 
 python manage.py migrate channels_postgres  # Creates internal tables
+```
 
 ## Usage
 
@@ -92,8 +94,6 @@ Setting it to a non zero value enables the expected behaviour.
 RDMS' like `PostgreSQL` were specifically built to handle huge amounts of data without crashing down and using too much memory. Hence, there's no channel capacity.
 
 Your database should be able to handle thousands of messages with ease. If you're still worried about the database table growing out of hand, you can reduce the `expiry` time of the individual messages so they will be purged if a consumer cannot process them on time.
-
-Once a channel is at capacity, it will refuse more messages. How this affects different parts of the system varies; a HTTP server will refuse connections, for example, while Django sending a response will just wait until there's space.
 
 ## Dependencies
 
