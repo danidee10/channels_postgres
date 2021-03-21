@@ -19,7 +19,7 @@ test_requires = crypto_requires + [
 setup(
     name='channels_postgres',
     version=__version__,
-    url='http://github.com/django/channels_redis/',
+    url='http://github.com/danidee10/channels_postgres/',
     author='Daniel Osaetin',
     author_email='f805nqs6j@relay.firefox.com',
     description='PostgreSQL-backed ASGI channel layer implementation',

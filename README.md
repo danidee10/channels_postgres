@@ -1,5 +1,10 @@
 # channels_postgres
 
+[![Tests](https://github.com/danidee10/channels_postgres/actions/workflows/tests.yml/badge.svg)](https://github.com/danidee10/channels_postgres/actions/workflows/tests.yml)
+
+[![channels_postgres test](https://img.shields.io/pypi/v/channels_postgres.svg)](https://pypi.python.org/pypi/channels_postgres)
+
+
 A Django Channels channel layer that uses PostgreSQL as its backing store
 
 ## Installation
@@ -52,9 +57,9 @@ capacity
 
 ### symmetric_encryption_keys
 
-Pass this to enable the optional symmetric encryption mode of the backend. To use it, make sure you have the cryptography package installed, or specify the cryptography extra when you install channels_redis:
+Pass this to enable the optional symmetric encryption mode of the backend. To use it, make sure you have the cryptography package installed, or specify the cryptography extra when you install channels_postgres:
 
-pip install channels_redis[cryptography]
+pip install channels_postgres[cryptography]
 
 symmetric_encryption_keys should be a list of strings, with each string being an encryption key. The first key is always used for encryption; all are considered for decryption, so you can rotate keys without downtime - just add a new key at the start and move the old one down, then remove the old one after the message expiry time has passed.
 
@@ -67,7 +72,7 @@ If you're using Django, you may also wish to set this to your site's SECRET_KEY 
 ```python
 CHANNEL_LAYERS = {
     'default': {
-        'BACKEND': 'channels_redis.core.PostgresChannelLayer',
+        'BACKEND': 'channels_postgres.core.PostgresChannelLayer',
         'CONFIG': {
             ...,
             'symmetric_encryption_keys': [SECRET_KEY],
