@@ -1,3 +1,4 @@
+import random
 import asyncio
 
 import django
@@ -56,7 +57,7 @@ async def channel_layer():
     """Channel layer fixture that flushes automatically."""
     channel_layer = PostgresChannelLayer(**settings.DATABASES['channels_postgres'])
     await yield_(channel_layer)
-    # await channel_layer.flush()
+    await channel_layer.flush()
 
 
 @pytest.mark.asyncio
@@ -72,7 +73,7 @@ async def test_send_receive(channel_layer):
 
 
 @pytest.mark.skip
-# Skipped for now....
+# Skipped for now.... aiopg picks the first event loop it can find and sticks to it
 @pytest.mark.parametrize("channel_layer", [None])  # Fixture can't handle sync
 def test_double_receive(channel_layer):
     """
@@ -173,3 +174,217 @@ async def test_groups_basic(channel_layer):
     with pytest.raises(asyncio.TimeoutError):
         async with async_timeout.timeout(1):
             await channel_layer.receive(channel_name2)
+
+
+@pytest.mark.asyncio
+async def test_groups_same_prefix(channel_layer):
+    """
+    Tests group_send with multiple channels with same channel prefix
+    """
+    channel_name1 = await channel_layer.new_channel(prefix="test-gr-chan")
+    channel_name2 = await channel_layer.new_channel(prefix="test-gr-chan")
+    channel_name3 = await channel_layer.new_channel(prefix="test-gr-chan")
+    await channel_layer.group_add("test-group", channel_name1)
+    await channel_layer.group_add("test-group", channel_name2)
+    await channel_layer.group_add("test-group", channel_name3)
+    await channel_layer.group_send("test-group", {"type": "message.1"})
+
+    # Make sure we get the message on the channels that were in
+    async with async_timeout.timeout(1):
+        assert (await channel_layer.receive(channel_name1))["type"] == "message.1"
+        assert (await channel_layer.receive(channel_name2))["type"] == "message.1"
+        assert (await channel_layer.receive(channel_name3))["type"] == "message.1"
+
+
+@pytest.mark.asyncio
+async def test_receive_cancel(channel_layer):
+    """
+    Makes sure we can cancel a receive without blocking
+    """
+    channel = await channel_layer.new_channel()
+    delay = 0
+    while delay < 0.01:
+        await channel_layer.send(channel, {"type": "test.message", "text": "Ahoy-hoy!"})
+
+        task = asyncio.ensure_future(channel_layer.receive(channel))
+        await asyncio.sleep(delay)
+        task.cancel()
+        delay += 0.0001
+
+        try:
+            await asyncio.wait_for(task, None)
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_random_reset__channel_name(channel_layer):
+    """
+    Makes sure resetting random seed does not make us reuse channel names.
+    """
+    random.seed(1)
+    channel_name_1 = await channel_layer.new_channel()
+    random.seed(1)
+    channel_name_2 = await channel_layer.new_channel()
+
+    assert channel_name_1 != channel_name_2
+
+
+@pytest.mark.asyncio
+async def test_random_reset__client_prefix():
+    """
+    Makes sure resetting random seed does not make us reuse client_prefixes.
+    """
+    random.seed(1)
+    channel_layer_1 = PostgresChannelLayer(**settings.DATABASES['channels_postgres'])
+    random.seed(1)
+    channel_layer_2 = PostgresChannelLayer(**settings.DATABASES['channels_postgres'])
+    assert channel_layer_1.client_prefix != channel_layer_2.client_prefix
+
+
+@pytest.mark.asyncio
+async def test_message_expiry__earliest_message_expires():
+    expiry = 3
+    delay = 2
+    channel_layer = PostgresChannelLayer(**settings.DATABASES['channels_postgres'], expiry=expiry)
+    channel_name = await channel_layer.new_channel()
+
+    task = asyncio.ensure_future(
+        send_three_messages_with_delay(channel_name, channel_layer, delay)
+    )
+    await asyncio.wait_for(task, None)
+
+    # the first message should have expired, we should only see the second message and the third
+    message = await channel_layer.receive(channel_name)
+    assert message["type"] == "test.message"
+    assert message["text"] == "Second!"
+
+    message = await channel_layer.receive(channel_name)
+    assert message["type"] == "test.message"
+    assert message["text"] == "Third!"
+
+    # Make sure there's no third message even out of order
+    with pytest.raises(asyncio.TimeoutError):
+        async with async_timeout.timeout(1):
+            await channel_layer.receive(channel_name)
+
+
+@pytest.mark.asyncio
+async def test_message_expiry__all_messages_under_expiration_time():
+    expiry = 3
+    delay = 1
+    channel_layer = PostgresChannelLayer(**settings.DATABASES['channels_postgres'], expiry=expiry)
+    channel_name = await channel_layer.new_channel()
+
+    task = asyncio.ensure_future(
+        send_three_messages_with_delay(channel_name, channel_layer, delay)
+    )
+    await asyncio.wait_for(task, None)
+
+    # expiry = 3, total delay under 3, all messages there
+    message = await channel_layer.receive(channel_name)
+    assert message["type"] == "test.message"
+    assert message["text"] == "First!"
+
+    message = await channel_layer.receive(channel_name)
+    assert message["type"] == "test.message"
+    assert message["text"] == "Second!"
+
+    message = await channel_layer.receive(channel_name)
+    assert message["type"] == "test.message"
+    assert message["text"] == "Third!"
+
+
+@pytest.mark.asyncio
+async def test_message_expiry__group_send():
+    expiry = 3
+    delay = 2
+    channel_layer = PostgresChannelLayer(**settings.DATABASES['channels_postgres'], expiry=expiry)
+    channel_name = await channel_layer.new_channel()
+
+    await channel_layer.group_add("test-group", channel_name)
+
+    task = asyncio.ensure_future(
+        group_send_three_messages_with_delay("test-group", channel_layer, delay)
+    )
+    await asyncio.wait_for(task, None)
+
+    # the first message should have expired, we should only see the second message and the third
+    message = await channel_layer.receive(channel_name)
+    assert message["type"] == "test.message"
+    assert message["text"] == "Second!"
+
+    message = await channel_layer.receive(channel_name)
+    assert message["type"] == "test.message"
+    assert message["text"] == "Third!"
+
+    # Make sure there's no third message even out of order
+    with pytest.raises(asyncio.TimeoutError):
+        async with async_timeout.timeout(1):
+            await channel_layer.receive(channel_name)
+
+
+@pytest.mark.asyncio
+async def test_message_expiry__group_send__one_channel_expires_message():
+    expiry = 4
+    delay = 1
+
+    channel_layer = PostgresChannelLayer(**settings.DATABASES['channels_postgres'], expiry=expiry)
+    channel_1 = await channel_layer.new_channel()
+    channel_2 = await channel_layer.new_channel(prefix="channel_2")
+
+    await channel_layer.group_add("test-group", channel_1)
+    await channel_layer.group_add("test-group", channel_2)
+
+    # Let's give channel_1 one additional message and then sleep
+    await channel_layer.send(channel_1, {"type": "test.message", "text": "Zero!"})
+    await asyncio.sleep(2)
+
+    task = asyncio.ensure_future(
+        group_send_three_messages_with_delay("test-group", channel_layer, delay)
+    )
+    await asyncio.wait_for(task, None)
+
+    # message Zero! was sent about 2 + 1 + 1 seconds ago and it should have expired
+    message = await channel_layer.receive(channel_1)
+    assert message["type"] == "test.message"
+    assert message["text"] == "First!"
+
+    message = await channel_layer.receive(channel_1)
+    assert message["type"] == "test.message"
+    assert message["text"] == "Second!"
+
+    message = await channel_layer.receive(channel_1)
+    assert message["type"] == "test.message"
+    assert message["text"] == "Third!"
+
+    # Make sure there's no fourth message even out of order
+    with pytest.raises(asyncio.TimeoutError):
+        async with async_timeout.timeout(1):
+            await channel_layer.receive(channel_1)
+
+    # channel_2 should receive all three messages from group_send
+    message = await channel_layer.receive(channel_2)
+    assert message["type"] == "test.message"
+    assert message["text"] == "First!"
+
+    # the first message should have expired, we should only see the second message and the third
+    message = await channel_layer.receive(channel_2)
+    assert message["type"] == "test.message"
+    assert message["text"] == "Second!"
+
+    message = await channel_layer.receive(channel_2)
+    assert message["type"] == "test.message"
+    assert message["text"] == "Third!"
+
+
+def test_default_group_key_format():
+    channel_layer = PostgresChannelLayer(**settings.DATABASES['channels_postgres'])
+    group_name = channel_layer._group_key("test_group")
+    assert group_name == "asgi:group:test_group"
+
+
+def test_custom_group_key_format():
+    channel_layer = PostgresChannelLayer(**settings.DATABASES['channels_postgres'], prefix="test_prefix")
+    group_name = channel_layer._group_key("test_group")
+    assert group_name == "test_prefix:group:test_group"
