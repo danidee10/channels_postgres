@@ -82,7 +82,7 @@ def test_double_receive(channel_layer):
     """
     channel_layer = PostgresChannelLayer(**settings.DATABASES['channels_postgres'])
 
-    # Aioredis connections can't be used from different event loops, so
+    # aiopg connections can't be used from different event loops, so
     # send and close need to be done in the same async_to_sync call.
     async def send_and_close(*args, **kwargs):
         await channel_layer.send(*args, **kwargs)
