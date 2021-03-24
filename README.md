@@ -9,8 +9,22 @@ A Django Channels channel layer that uses PostgreSQL as its backing store
 
 ```bash
 pip install channels_postgres
+```
 
-python manage.py migrate channels_postgres  # Creates internal tables
+### Update INSTALLED_APPS
+
+```python
+INSTALLED_APPS = (
+    ...
+    'channels',
+    'channels_postgres',
+    ...
+)
+```
+
+### Run migrations for internal tables
+```bash
+python manage.py migrate channels_postgres
 ```
 
 ## Usage
