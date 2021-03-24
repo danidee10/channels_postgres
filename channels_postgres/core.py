@@ -53,7 +53,7 @@ class PostgresChannelLayer(BaseChannelLayer):
 
         db_wrapper = DatabaseWrapper(kwargs)
         self.db_params = db_wrapper.get_connection_params()
-        self.django_db = DatabaseLayer()
+        self.django_db = DatabaseLayer(logger=logger)
 
     async def get_pool(self):
         global pool, creating_pool
@@ -63,7 +63,7 @@ class PostgresChannelLayer(BaseChannelLayer):
 
         if pool is None:
             creating_pool = True
-            pool = await aiopg.create_pool(**self.db_params, maxsize=3)
+            pool = await aiopg.create_pool(**self.db_params)
             creating_pool = False
 
         return pool
@@ -111,7 +111,7 @@ class PostgresChannelLayer(BaseChannelLayer):
                 WHERE id = (
                     SELECT id
                     FROM channels_postgres_message
-                    WHERE channel=%s
+                    WHERE channel=%s AND expire > NOW()
                     ORDER BY id
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
@@ -126,8 +126,11 @@ class PostgresChannelLayer(BaseChannelLayer):
             message = await cur.fetchone()
 
             if not message:
-                await cur.execute(retrieve_events_sql)
+                # Unlisten and clear pending messages (From other connections) from the queue
+                await cur.execute('UNLISTEN *;')
+                conn._notifies = asyncio.Queue()
 
+                await cur.execute(retrieve_events_sql)
                 event = await conn.notifies.get()
                 message_id = event.payload
 
@@ -137,7 +140,6 @@ class PostgresChannelLayer(BaseChannelLayer):
                 )
                 await cur.execute(retrieve_message_sql, (message_id,))
                 message = await cur.fetchone()
-                await cur.execute(f'UNLISTEN "{channel}";')
 
             message = self.deserialize(message[0])
 
@@ -158,9 +160,9 @@ class PostgresChannelLayer(BaseChannelLayer):
 
         # Delete expired groups (if enabled) and messages
         if self.group_expiry > 0:
-            create_task(self.django_db.delete_expired_groups(self.group_expiry))
+            create_task(self.django_db.delete_expired_groups())
 
-        create_task(self.django_db.delete_expired_messages(self.expiry))
+        create_task(self.django_db.delete_expired_messages())
 
         return await self._get_message_from_channel(channel)
 
