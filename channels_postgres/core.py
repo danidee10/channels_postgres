@@ -38,13 +38,16 @@ class PostgresChannelLayer(BaseChannelLayer):
 
     def __init__(
         self, prefix='asgi', expiry=60, group_expiry=0,
-        symmetric_encryption_keys=None, **kwargs
+        symmetric_encryption_keys=None, async_lib_config=dict(),
+        **kwargs
     ):
         self.prefix = prefix
         self.expiry = expiry
         self.group_expiry = group_expiry
         self.client_prefix = uuid.uuid4().hex[:5]
         self._setup_encryption(symmetric_encryption_keys)
+
+        self.async_lib_config = async_lib_config
 
         try:
             kwargs['OPTIONS']
@@ -63,7 +66,7 @@ class PostgresChannelLayer(BaseChannelLayer):
 
         if pool is None:
             creating_pool = True
-            pool = await aiopg.create_pool(**self.db_params)
+            pool = await aiopg.create_pool(**self.db_params, **self.async_lib_config)
             creating_pool = False
 
         return pool
