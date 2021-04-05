@@ -105,7 +105,11 @@ class PostgresChannelLayer(BaseChannelLayer):
         assert "__asgi_channel__" not in message
         message = self.serialize(message)
 
-        await self.django_db.send_to_channel([channel], message, self.expiry)
+        pool = await self.get_pool()
+        with await pool as conn:
+            await self.django_db.send_to_channel(
+                conn, [channel], message, self.expiry
+            )
 
     async def _get_message_from_channel(self, channel):
         retrieve_events_sql = f'LISTEN "{channel}";'
@@ -203,9 +207,12 @@ class PostgresChannelLayer(BaseChannelLayer):
     async def group_add(self, group, channel):
         """Adds the channel name to a group to the Postgres table."""
         group_key = self._group_key(group)
-        await self.django_db.add_channel_to_group(
-            group_key, channel, self.group_expiry
-        )
+
+        pool = await self.get_pool()
+        with await pool as conn:
+            await self.django_db.add_channel_to_group(
+                conn, group_key, channel, self.group_expiry
+            )
 
     async def group_discard(self, group, channel):
         """
@@ -231,13 +238,12 @@ class PostgresChannelLayer(BaseChannelLayer):
         group_key = self._group_key(group)
         # Retrieve list of all channel names related to the group
         message = self.serialize(message)
-        group_channels = await self.django_db.retrieve_group_channels(
-            group_key
-        )
 
-        await self.django_db.send_to_channel(
-            group_channels, message, self.expiry
-        )
+        pool = await self.get_pool()
+        with await pool as conn:
+            await self.django_db.send_to_channel(
+                conn, group_key, message, self.expiry
+            )
 
     def _group_key(self, group):
         """Common function to make the storage key for the group."""
