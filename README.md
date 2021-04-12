@@ -43,7 +43,7 @@ CHANNEL_LAYERS = {
             'HOST': '127.0.0.1',
             'PORT': '5432',
 
-            'async_lib_config: {
+            'config: {
                 ...
             }
         },
@@ -53,9 +53,9 @@ CHANNEL_LAYERS = {
 
 The Config object is exactly the same as the standard config object for Django's PostgreSQL database. See the django documentation for more information.
 
-`async_lib_config` is a dictionary of parameters to the underlying async postgres library (in this case `aiopg`) This setting can be used to control the database pool size, connection timeout etc. See the [aiopg documentation](https://aiopg.readthedocs.io/en/stable/core.html?highlight=pool#pool) for more information.
+`config` is a dictionary of parameters to the underlying async postgres library (in this case `aiopg`) This setting can be used to control the database pool size, connection timeout etc. See the [aiopg documentation](https://aiopg.readthedocs.io/en/stable/core.html?highlight=pool#pool) for more information.
 
-A typical use of `async_lib_config` would be to increase the `maxsize` of the connection pool. The default of 10 might be too low for sites with a decent amount of traffic.
+A typical use of `config` would be to increase the `maxsize` of the connection pool. The default of 10 might be too low for sites with a decent amount of traffic.
 
 The config parameters are described below:
 

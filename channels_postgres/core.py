@@ -17,8 +17,11 @@ if sys.version_info < (3, 7):
 else:
     from asyncio import create_task
 
+# Create two connection pools
+# short_pool is for short lived connections (i.e for sending, flushing and discarding)
 logger = logging.getLogger(__name__)
 pool = None
+short_pool = None
 creating_pool = False
 
 
@@ -38,7 +41,7 @@ class PostgresChannelLayer(BaseChannelLayer):
 
     def __init__(
         self, prefix='asgi', expiry=60, group_expiry=0,
-        symmetric_encryption_keys=None, async_lib_config=dict(),
+        symmetric_encryption_keys=None, config=dict(),
         **kwargs
     ):
         self.prefix = prefix
@@ -47,7 +50,7 @@ class PostgresChannelLayer(BaseChannelLayer):
         self.client_prefix = uuid.uuid4().hex[:5]
         self._setup_encryption(symmetric_encryption_keys)
 
-        self.async_lib_config = async_lib_config
+        self.async_lib_config = config
 
         try:
             kwargs['OPTIONS']
@@ -59,17 +62,18 @@ class PostgresChannelLayer(BaseChannelLayer):
         self.django_db = DatabaseLayer(logger=logger)
 
     async def get_pool(self):
-        global pool, creating_pool
-        if creating_pool and pool is None:
+        global pool, short_pool, creating_pool
+        if creating_pool and (pool is None or short_pool is None):
             await asyncio.sleep(0.1)
             return await self.get_pool()
 
-        if pool is None:
+        if pool is None or short_pool is None:
             creating_pool = True
             pool = await aiopg.create_pool(**self.db_params, **self.async_lib_config)
+            short_pool = await aiopg.create_pool(**self.db_params, maxsize=5)
             creating_pool = False
 
-        return pool
+        return pool, short_pool
 
     def _setup_encryption(self, symmetric_encryption_keys):
         # See if we can do encryption if they asked
@@ -105,10 +109,10 @@ class PostgresChannelLayer(BaseChannelLayer):
         assert "__asgi_channel__" not in message
         message = self.serialize(message)
 
-        pool = await self.get_pool()
+        _, pool = await self.get_pool()
         with await pool as conn:
             await self.django_db.send_to_channel(
-                conn, [channel], message, self.expiry
+                conn, '', message, self.expiry, channel=channel
             )
 
     async def _get_message_from_channel(self, channel):
@@ -126,7 +130,7 @@ class PostgresChannelLayer(BaseChannelLayer):
                 RETURNING message;
             """
 
-        pool = await self.get_pool()
+        pool, _ = await self.get_pool()
         with await pool as conn:
             cur = await conn.cursor()
             await cur.execute(retrieve_queued_messages_sql, (channel,))
@@ -165,12 +169,6 @@ class PostgresChannelLayer(BaseChannelLayer):
                 self.client_prefix + '!'
             ), 'Wrong client prefix'
 
-        # Delete expired groups (if enabled) and messages
-        if self.group_expiry > 0:
-            create_task(self.django_db.delete_expired_groups())
-
-        create_task(self.django_db.delete_expired_messages())
-
         return await self._get_message_from_channel(channel)
 
     async def new_channel(self, prefix='specific'):
@@ -198,7 +196,8 @@ class PostgresChannelLayer(BaseChannelLayer):
             'TRUNCATE channels_postgres_message;'
         )
 
-        with await (await self.get_pool()) as conn:
+        _, pool = await self.get_pool()
+        with await pool as conn:
             cur = await conn.cursor()
             await cur.execute(truncate_table_sql)
 
@@ -208,7 +207,7 @@ class PostgresChannelLayer(BaseChannelLayer):
         """Adds the channel name to a group to the Postgres table."""
         group_key = self._group_key(group)
 
-        pool = await self.get_pool()
+        _, pool = await self.get_pool()
         with await pool as conn:
             await self.django_db.add_channel_to_group(
                 conn, group_key, channel, self.group_expiry
@@ -227,9 +226,16 @@ class PostgresChannelLayer(BaseChannelLayer):
             'DELETE FROM channels_postgres_groupchannel '
             'WHERE group_key=%s AND channel =%s'
         )
-        with await (await self.get_pool()) as conn:
+        _, pool = await self.get_pool()
+        with await pool as conn:
             cur = await conn.cursor()
             await cur.execute(delete_channel_sql, (group_key, channel))
+
+        # Delete expired groups (if enabled) and messages
+        if self.group_expiry > 0:
+            create_task(self.django_db.delete_expired_groups(self.db_params))
+
+        create_task(self.django_db.delete_expired_messages(self.db_params))
 
     async def group_send(self, group, message):
         """Sends a message to the entire group."""
@@ -239,7 +245,7 @@ class PostgresChannelLayer(BaseChannelLayer):
         # Retrieve list of all channel names related to the group
         message = self.serialize(message)
 
-        pool = await self.get_pool()
+        _, pool = await self.get_pool()
         with await pool as conn:
             await self.django_db.send_to_channel(
                 conn, group_key, message, self.expiry

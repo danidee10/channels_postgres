@@ -1,11 +1,9 @@
 """common db methods."""
 
+import asyncio
 import logging
 
-from django.utils import timezone
-
-from channels.db import database_sync_to_async
-from channels_postgres.models import GroupChannel, Message
+import aiopg
 
 
 class DatabaseLayer:
@@ -16,10 +14,13 @@ class DatabaseLayer:
         if not self.logger:
             self.logger = logging.getLogger('channels_postgres.database')
 
-    async def send_to_channel(self, conn, group_key, message, expire):
+    async def send_to_channel(self, conn, group_key, message, expire, channel=None):
         """Send a message on a channel."""
         cur = await conn.cursor()
-        channels = await self._retrieve_group_channels(cur, group_key)
+        if channel is None:
+            channels = await self._retrieve_group_channels(cur, group_key)
+        else:
+            channels = [channel]
 
         insert_message_sql = (
             'INSERT INTO channels_postgres_message (channel, message, expire) VALUES '
@@ -62,14 +63,22 @@ class DatabaseLayer:
 
         return channels
 
-    @database_sync_to_async
-    def delete_expired_groups(self):
-        GroupChannel.objects.using(self.using).filter(
-            expire__lt=timezone.now()
-        ).delete()
+    async def delete_expired_groups(self, db_params):
+        await asyncio.sleep(60)
+        delete_sql = (
+            'DELETE FROM channels_postgres_groupchannel '
+            'WHERE expire < NOW()'
+        )
+        conn = await aiopg.connect(**db_params)
+        cur = await conn.cursor()
+        await cur.execute(delete_sql)
 
-    @database_sync_to_async
-    def delete_expired_messages(self):
-        Message.objects.using(self.using).filter(
-            expire__lt=timezone.now()
-        ).delete()
+    async def delete_expired_messages(self, db_params):
+        await asyncio.sleep(60)
+        delete_sql = (
+            'DELETE FROM channels_postgres_message '
+            'WHERE expire < NOW()'
+        )
+        conn = await aiopg.connect(**db_params)
+        cur = await conn.cursor()
+        await cur.execute(delete_sql)
