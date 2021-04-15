@@ -1,57 +1,86 @@
 """common db methods."""
 
+import random
+import asyncio
 import logging
 
-from django.utils import timezone
-
-from channels.db import database_sync_to_async
-from channels_postgres.models import GroupChannel, Message
+import aiopg
 
 
 class DatabaseLayer:
     def __init__(self, using='channels_postgres', logger=None):
-        self.using = using
         self.logger = logger
+        self.using = using
 
         if not self.logger:
             self.logger = logging.getLogger('channels_postgres.database')
 
-    @database_sync_to_async
-    def send_to_channel(self, channels, message, expire):
-        """Send a message on a channel."""
-        messages = []
-        for channel in channels:
-            message_obj = Message(
-                channel=channel, message=message,
-                expire=timezone.now() + timezone.timedelta(seconds=expire)
-            )
-            messages.append(message_obj)
-
-        Message.objects.using(self.using).bulk_create(messages)
-
-    @database_sync_to_async
-    def add_channel_to_group(self, group_key, channel, expire):
-        GroupChannel.objects.using(self.using).create(
-            group_key=group_key, channel=channel,
-            expire=timezone.now() + timezone.timedelta(seconds=expire)
+    async def _retrieve_group_channels(self, cur, group_key):
+        retrieve_channels_sql = (
+            'SELECT DISTINCT group_key,channel '
+            'FROM channels_postgres_groupchannel WHERE group_key=%s;'
         )
+
+        await cur.execute(retrieve_channels_sql, (group_key,))
+
+        channels = []
+        async for row in cur:
+            channels.append(row[1])
+
+        return channels
+
+    async def send_to_channel(self, conn, group_key, message, expire, channel=None):
+        """Send a message to a channel/channels (if no channel is specified)."""
+        cur = await conn.cursor()
+        if channel is None:
+            channels = await self._retrieve_group_channels(cur, group_key)
+        else:
+            channels = [channel]
+
+        values_str = b','.join(
+            cur.mogrify(
+                "(%s, %s, (NOW() + INTERVAL '%s seconds'))", (channel, message, expire)
+            ) for channel in channels
+        )
+        insert_message_sql = (
+            b'INSERT INTO channels_postgres_message (channel, message, expire) VALUES ' + values_str
+        )
+
+        await cur.execute(insert_message_sql)
+
+    async def add_channel_to_group(self, conn, group_key, channel, expire):
+        group_add_sql = (
+            'INSERT INTO channels_postgres_groupchannel (group_key, channel, expire) '
+            "VALUES (%s, %s, (NOW() + INTERVAL '%s seconds'))"
+        )
+
+        cur = await conn.cursor()
+        await cur.execute(group_add_sql, (group_key, channel, expire))
 
         self.logger.debug('Channel %s added to Group %s', channel, group_key)
 
-    @database_sync_to_async
-    def retrieve_group_channels(self, group_key):
-        return GroupChannel.objects.using('channels_postgres').filter(
-            group_key=group_key
-        ).distinct('channel').values_list('channel', flat=True)
+    async def delete_expired_groups(self, db_params):
+        expire = 60 * random.randint(10, 20)
+        self.logger.debug('Deleting expired groups in %s seconds...', expire)
 
-    @database_sync_to_async
-    def delete_expired_groups(self):
-        GroupChannel.objects.using(self.using).filter(
-            expire__lt=timezone.now()
-        ).delete()
+        await asyncio.sleep(60)
+        delete_sql = (
+            'DELETE FROM channels_postgres_groupchannel '
+            'WHERE expire < NOW()'
+        )
+        async with aiopg.connect(**db_params) as conn:
+            cur = await conn.cursor()
+            await cur.execute(delete_sql)
 
-    @database_sync_to_async
-    def delete_expired_messages(self):
-        Message.objects.using(self.using).filter(
-            expire__lt=timezone.now()
-        ).delete()
+    async def delete_expired_messages(self, db_params):
+        expire = 60 * random.randint(10, 20)
+        self.logger.debug('Deleting expired messages in %s seconds...', expire)
+
+        await asyncio.sleep(60)
+        delete_sql = (
+            'DELETE FROM channels_postgres_message '
+            'WHERE expire < NOW()'
+        )
+        async with aiopg.connect(**db_params) as conn:
+            cur = await conn.cursor()
+            await cur.execute(delete_sql)
