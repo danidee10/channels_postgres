@@ -142,7 +142,7 @@ class PostgresChannelLayer(BaseChannelLayer):
                 conn._notifies = asyncio.Queue()
 
                 await cur.execute(retrieve_events_sql)
-                event = await conn.notifies.get()
+                event = await conn._notifies.get()
                 message_id = event.payload
 
                 retrieve_message_sql = (
