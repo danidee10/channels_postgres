@@ -7,7 +7,6 @@ from django.conf import settings
 import pytest
 import async_timeout
 from asgiref.sync import async_to_sync
-from async_generator import async_generator, yield_
 
 django.setup()  # noqa
 from channels_postgres.core import PostgresChannelLayer  # noqa
@@ -52,11 +51,10 @@ async def group_send_three_messages_with_delay(group_name, channel_layer, delay)
 
 
 @pytest.fixture()
-@async_generator
 async def channel_layer():
     """Channel layer fixture that flushes automatically."""
     channel_layer = PostgresChannelLayer(**settings.DATABASES['channels_postgres'])
-    await yield_(channel_layer)
+    yield channel_layer
     await channel_layer.flush()
 
 
