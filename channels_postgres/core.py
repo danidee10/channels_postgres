@@ -213,7 +213,7 @@ class PostgresChannelLayer(BaseChannelLayer):
                 conn, group_key, channel, self.group_expiry
             )
 
-    async def group_discard(self, group, channel):
+    async def group_discard(self, group, channel, expire=None):
         """
         Removes the channel from the named group if it is in the group;
         does nothing otherwise (does not error)
@@ -235,7 +235,7 @@ class PostgresChannelLayer(BaseChannelLayer):
         if self.group_expiry > 0:
             create_task(self.django_db.delete_expired_groups(self.db_params))
 
-        create_task(self.django_db.delete_expired_messages(self.db_params))
+        create_task(self.django_db.delete_expired_messages(self.db_params, expire))
 
     async def group_send(self, group, message):
         """Sends a message to the entire group."""

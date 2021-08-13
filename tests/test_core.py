@@ -162,7 +162,7 @@ async def test_groups_basic(channel_layer):
     await channel_layer.group_add("test-group", channel_name1)
     await channel_layer.group_add("test-group", channel_name2)
     await channel_layer.group_add("test-group", channel_name3)
-    await channel_layer.group_discard("test-group", channel_name2)
+    await channel_layer.group_discard("test-group", channel_name2, expire=1)
     await channel_layer.group_send("test-group", {"type": "message.1"})
     # Make sure we get the message on the two channels that were in
     async with async_timeout.timeout(1):

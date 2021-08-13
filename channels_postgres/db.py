@@ -72,11 +72,12 @@ class DatabaseLayer:
             cur = await conn.cursor()
             await cur.execute(delete_sql)
 
-    async def delete_expired_messages(self, db_params):
-        expire = 60 * random.randint(10, 20)
+    async def delete_expired_messages(self, db_params, expire):
+        if expire is None:
+            expire = 60 * random.randint(10, 20)
         self.logger.debug('Deleting expired messages in %s seconds...', expire)
 
-        await asyncio.sleep(60)
+        await asyncio.sleep(expire)
         delete_sql = (
             'DELETE FROM channels_postgres_message '
             'WHERE expire < NOW()'
