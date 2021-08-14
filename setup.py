@@ -10,7 +10,6 @@ crypto_requires = ['cryptography>=1.3.0']
 test_requires = crypto_requires + [
     'pytest',
     'pytest-asyncio',
-    'async_generator',
     'async-timeout',
 ]
 
