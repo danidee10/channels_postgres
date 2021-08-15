@@ -1,3 +1,4 @@
+import sys
 import random
 import asyncio
 
@@ -10,6 +11,12 @@ from asgiref.sync import async_to_sync
 
 django.setup()  # noqa
 from channels_postgres.core import PostgresChannelLayer  # noqa
+
+
+if sys.version_info < (3, 7):
+    create_task = asyncio.ensure_future
+else:
+    from asyncio import create_task
 
 
 @pytest.fixture(scope='module')
@@ -59,7 +66,7 @@ async def channel_layer():
 
 
 @pytest.mark.asyncio
-async def test_send_receive(channel_layer):
+async def test_send_receive_basic(channel_layer):
     """Makes sure we can send a message to a normal channel and receive it."""
     await channel_layer.send(
         'test-channel-1', {'type': 'test.message', 'text': 'Ahoy-hoy!'}
@@ -68,6 +75,30 @@ async def test_send_receive(channel_layer):
 
     assert message['type'] == 'test.message'
     assert message['text'] == 'Ahoy-hoy!'
+
+
+@pytest.mark.asyncio
+async def test_send_receive(channel_layer):
+    """
+    Similar to the `test_send_receive_basic`
+    but mimics a real world scenario where clients connect first
+    and wait for messages
+    """
+
+    task = create_task(channel_layer.receive('test-channel-2'))
+
+    async def chained_tasks():
+        await asyncio.sleep(1)
+        message = await channel_layer.send(
+            'test-channel-2', {'type': 'test.message_connect_wait', 'text': 'Hello world!'}
+        )
+        return message
+
+    await asyncio.wait([task, create_task(chained_tasks())], timeout=2)
+
+    message = task.result()
+    assert message['type'] == 'test.message_connect_wait'
+    assert message['text'] == 'Hello world!'
 
 
 @pytest.mark.skip
