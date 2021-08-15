@@ -13,7 +13,7 @@ from .db import DatabaseLayer
 
 
 if sys.version_info < (3, 7):
-    create_task = asyncio.get_event_loop().create_task
+    create_task = asyncio.ensure_future
 else:
     from asyncio import create_task
 
