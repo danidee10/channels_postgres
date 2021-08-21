@@ -35,7 +35,7 @@ setup(
         'msgpack~=1.0',
         'asgiref>=3.2.10,<4',
         'channels<4',
-        'aiopg>=1.1.0'
+        'aiopg>=1.3.1'
     ],
     extras_require={'cryptography': crypto_requires, 'tests': test_requires},
 )
