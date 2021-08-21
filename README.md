@@ -27,6 +27,26 @@ INSTALLED_APPS = (
 python manage.py migrate channels_postgres
 ```
 
+### Update DATABASES dictionary
+
+Add the 'channels_postgres' entry to the DATABASES dictionary in your Django settings file like so:
+
+```python
+	DATABASES = {
+		'default': {
+			...
+		},
+		'channels_postgres': {
+			'ENGINE': 'django.db.backends.postgresql_psycopg2',
+			'NAME': 'postgres',
+			'USER': 'postgres',
+			'PASSWORD': 'password',
+			'HOST': '127.0.0.1',
+			'PORT': '5432',
+		}
+	}
+```
+
 ## Usage
 
 Set up the channel layer in your Django settings file like so:
