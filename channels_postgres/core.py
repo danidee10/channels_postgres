@@ -140,6 +140,7 @@ class PostgresChannelLayer(BaseChannelLayer):
                 # Unlisten and clear pending messages (From other connections) from the queue
                 await cur.execute('UNLISTEN *;')
                 conn._notifies = asyncio.Queue()
+                conn._notifies_proxy = aiopg.utils.ClosableQueue(conn._notifies, conn._loop)
 
                 await cur.execute(retrieve_events_sql)
                 event = await conn.notifies.get()
