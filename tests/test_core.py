@@ -183,6 +183,15 @@ async def test_reject_bad_client_prefix(channel_layer):
 
 
 @pytest.mark.asyncio
+async def test_non_existent_group(channel_layer):
+    """sending on Non-existent groups shoudldn't raise any Exceptions or send any message."""
+    try:
+        await channel_layer.group_send('non-existent', {'type': 'message.1'})
+    except Exception as e:
+        pytest.fail(f'Unexpected exception {e}')
+
+
+@pytest.mark.asyncio
 async def test_groups_basic(channel_layer):
     """
     Tests basic group operation.

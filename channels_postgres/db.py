@@ -34,6 +34,11 @@ class DatabaseLayer:
         cur = await conn.cursor()
         if channel is None:
             channels = await self._retrieve_group_channels(cur, group_key)
+            if not channels:
+                self.logger.warning(
+                    f"Group: {group_key} does not exist, did you call group_add?"
+                )
+                return
         else:
             channels = [channel]
 
