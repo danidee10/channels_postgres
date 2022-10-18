@@ -114,6 +114,7 @@ class PostgresChannelLayer(BaseChannelLayer):
             await self.django_db.send_to_channel(
                 conn, '', message, self.expiry, channel=channel
             )
+            conn.close()
 
     async def _get_message_from_channel(self, channel):
         retrieve_events_sql = f'LISTEN "{channel}";'
@@ -213,6 +214,7 @@ class PostgresChannelLayer(BaseChannelLayer):
             await self.django_db.add_channel_to_group(
                 conn, group_key, channel, self.group_expiry
             )
+            conn.close()
 
     async def group_discard(self, group, channel, expire=None):
         """
@@ -231,6 +233,8 @@ class PostgresChannelLayer(BaseChannelLayer):
         with await pool as conn:
             cur = await conn.cursor()
             await cur.execute(delete_channel_sql, (group_key, channel))
+
+            conn.close()
 
         # Delete expired groups (if enabled) and messages
         if self.group_expiry > 0:
@@ -251,6 +255,7 @@ class PostgresChannelLayer(BaseChannelLayer):
             await self.django_db.send_to_channel(
                 conn, group_key, message, self.expiry
             )
+            conn.close()
 
     def _group_key(self, group):
         """Common function to make the storage key for the group."""
