@@ -33,7 +33,7 @@ setup(
     python_requires='>=3.7',
     install_requires=[
         'msgpack~=1.0',
-        'asgiref~=3.5.2',
+        'asgiref>=3.5.2,<4',
         'channels~=4.0.0',
         'aiopg~=1.3.1'
     ],
