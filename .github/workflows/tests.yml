@@ -14,11 +14,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python-version: [3.7, 3.8, 3.9, "3.10", "3.11", "3.12"]
+        python-version: [3.9, "3.10", "3.11", "3.12"]
 
     services:
       postgres:
-        image: postgres:15.5
+        image: postgres:16-alpine
         env:
           POSTGRES_DB: postgres        
           POSTGRES_USER: postgres
