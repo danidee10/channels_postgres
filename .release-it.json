@@ -1,6 +1,7 @@
 {
     "npm": {
-      "publish": false
+      "publish": false,
+      "versionArgs": ["--allow-same-version"]
     },
     "git": {
       "commitMessage": "chore: Release ${version}"
