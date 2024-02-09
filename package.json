@@ -1,0 +1,12 @@
+{
+    "name": "channels_postgres",
+    "version": "0.0.5",
+    "devDependencies": {
+      "@release-it/bumper": "6.0.1",
+      "@release-it/conventional-changelog": "8.0.1",
+      "release-it": "17.0.0"
+    },
+    "description": "Postgres backend for Django channels",
+    "packageManager": "yarn@3.6.1"
+  }
+  

@@ -1,0 +1,38 @@
+{
+    "npm": {
+      "publish": false
+    },
+    "git": {
+      "commitMessage": "chore: Release ${version}"
+    },
+    "github": {
+      "release": true
+    },
+    "plugins": {
+      "@release-it/conventional-changelog": {
+        "infile": false,
+        "preset": {
+          "name": "conventionalcommits",
+          "types": [
+            {
+              "type": "chore",
+              "section": "Chore and depedencies"
+            },
+            {
+              "type": "feat",
+              "section": "Features"
+            },
+            {
+              "type": "fix",
+              "section": "Bug Fixes"
+            }
+          ]
+        }
+      },
+      "@release-it/bumper": {
+        "out": [
+          "package.json"
+        ]
+      }
+    }
+  }
