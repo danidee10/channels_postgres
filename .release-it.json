@@ -31,6 +31,7 @@
       },
       "@release-it/bumper": {
         "out": [
+          "channels_postgres/__init__.py",
           "package.json"
         ]
       }
