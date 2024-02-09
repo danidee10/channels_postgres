@@ -30,12 +30,12 @@ setup(
     zip_safe=False,
     packages=find_packages(exclude=['tests']),
     include_package_data=True,
-    python_requires='>=3.7',
+    python_requires='>=3.9',
     install_requires=[
-        'msgpack~=1.0',
-        'asgiref~=3.5.2',
+        'msgpack~=1.0.7',
+        'asgiref~=3.7.2',
         'channels~=4.0.0',
-        'aiopg~=1.3.1'
+        'aiopg~=1.4.0'
     ],
     extras_require={'cryptography': crypto_requires, 'tests': test_requires},
 )
