@@ -7,11 +7,7 @@ from channels_postgres import __version__
 
 crypto_requires = ['cryptography>=1.3.0']
 
-test_requires = crypto_requires + [
-    'pytest',
-    'pytest-asyncio',
-    'async-timeout',
-]
+test_requires = crypto_requires + ['pytest', 'pytest-asyncio', 'async-timeout']
 
 this_directory = path.abspath(path.dirname(__file__))
 with open(path.join(this_directory, 'README.md'), encoding='utf-8') as f:
@@ -34,8 +30,8 @@ setup(
     install_requires=[
         'msgpack~=1.0.7',
         'asgiref>=3.7.2,<4',
-        'channels~=4.0.0',
-        'aiopg~=1.4.0'
+        'channels>=4.0.0,<5',
+        'aiopg~=1.4.0',
     ],
     extras_require={'cryptography': crypto_requires, 'tests': test_requires},
 )

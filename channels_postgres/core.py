@@ -40,9 +40,13 @@ class PostgresChannelLayer(BaseChannelLayer):
     """
 
     def __init__(
-        self, prefix='asgi', expiry=60, group_expiry=0,
-        symmetric_encryption_keys=None, config=dict(),
-        **kwargs
+        self,
+        prefix='asgi',
+        expiry=60,
+        group_expiry=0,
+        symmetric_encryption_keys=None,
+        config=dict(),
+        **kwargs,
     ):
         self.prefix = prefix
         self.expiry = expiry
@@ -80,18 +84,15 @@ class PostgresChannelLayer(BaseChannelLayer):
         if symmetric_encryption_keys:
             if isinstance(symmetric_encryption_keys, (str, bytes)):
                 raise ValueError(
-                    "symmetric_encryption_keys must be a list of possible keys"
+                    'symmetric_encryption_keys must be a list of possible keys'
                 )
             try:
                 from cryptography.fernet import MultiFernet
             except ImportError:
                 raise ValueError(
-                    'Cannot run with encryption without `cryptography` '
-                    'installed.'
+                    'Cannot run with encryption without `cryptography` installed.'
                 )
-            sub_fernets = [
-                self.make_fernet(key) for key in symmetric_encryption_keys
-            ]
+            sub_fernets = [self.make_fernet(key) for key in symmetric_encryption_keys]
             self.crypter = MultiFernet(sub_fernets)
         else:
             self.crypter = None
@@ -103,10 +104,13 @@ class PostgresChannelLayer(BaseChannelLayer):
     async def send(self, channel, message):
         """Send a message onto a (general or specific) channel."""
         # Typecheck
-        assert isinstance(message, dict), "message is not a dict"
-        assert self.valid_channel_name(channel), "Channel name not valid"
+        assert isinstance(message, dict), 'message is not a dict'
+        try:
+            assert self.require_valid_channel_name(channel), 'Channel name not valid'
+        except AttributeError:
+            assert self.valid_channel_name(channel), 'Channel name not valid'
         # Make sure the message does not contain reserved keys
-        assert "__asgi_channel__" not in message
+        assert '__asgi_channel__' not in message
         message = self.serialize(message)
 
         _, pool = await self.get_pool()
@@ -164,12 +168,15 @@ class PostgresChannelLayer(BaseChannelLayer):
         If more than one coroutine waits on the same channel, the first waiter
         will be given the message when it arrives.
         """
-        assert self.valid_channel_name(channel)
+        try:
+            assert self.require_valid_channel_name(channel), 'Channel name not valid'
+        except AttributeError:
+            assert self.valid_channel_name(channel), 'Channel name not valid'
         if '!' in channel:
             real_channel = self.non_local_name(channel)
-            assert real_channel.endswith(
-                self.client_prefix + '!'
-            ), 'Wrong client prefix'
+            assert real_channel.endswith(self.client_prefix + '!'), (
+                'Wrong client prefix'
+            )
 
         return await self._get_message_from_channel(channel)
 
@@ -178,11 +185,7 @@ class PostgresChannelLayer(BaseChannelLayer):
         Returns a new channel name that can be used by something in our
         process as a specific channel.
         """
-        return "%s.%s!%s" % (
-            prefix,
-            self.client_prefix,
-            uuid.uuid4().hex,
-        )
+        return '%s.%s!%s' % (prefix, self.client_prefix, uuid.uuid4().hex)
 
     """ Flush extension """
 
@@ -221,8 +224,15 @@ class PostgresChannelLayer(BaseChannelLayer):
         Removes the channel from the named group if it is in the group;
         does nothing otherwise (does not error)
         """
-        assert self.valid_group_name(group), 'Group name not valid'
-        assert self.valid_channel_name(channel), 'Channel name not valid'
+        try:
+            assert self.require_valid_group_name(group), 'Group name not valid'
+        except AttributeError:
+            assert self.valid_group_name(group), 'Group name not valid'
+        try:
+            assert self.require_valid_channel_name(channel), 'Channel name not valid'
+        except AttributeError:
+            assert self.valid_channel_name(channel), 'Channel name not valid'
+
         group_key = self._group_key(group)
 
         delete_channel_sql = (
@@ -244,7 +254,10 @@ class PostgresChannelLayer(BaseChannelLayer):
 
     async def group_send(self, group, message):
         """Sends a message to the entire group."""
-        assert self.valid_group_name(group), "Group name not valid"
+        try:
+            assert self.require_valid_group_name(group), 'Group name not valid'
+        except AttributeError:
+            assert self.valid_group_name(group), 'Group name not valid'
 
         group_key = self._group_key(group)
         # Retrieve list of all channel names related to the group
@@ -252,14 +265,12 @@ class PostgresChannelLayer(BaseChannelLayer):
 
         _, pool = await self.get_pool()
         with await pool as conn:
-            await self.django_db.send_to_channel(
-                conn, group_key, message, self.expiry
-            )
+            await self.django_db.send_to_channel(conn, group_key, message, self.expiry)
             conn.close()
 
     def _group_key(self, group):
         """Common function to make the storage key for the group."""
-        return ("%s:group:%s" % (self.prefix, group))
+        return '%s:group:%s' % (self.prefix, group)
 
     """ Serialization """
 
