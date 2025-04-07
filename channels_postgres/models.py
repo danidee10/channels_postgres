@@ -1,12 +1,14 @@
+from datetime import datetime
+
 from django.db import models
 from django.utils import timezone
 
 
-def _default_channel_expiry_time():
+def _default_channel_expiry_time() -> datetime:
     return timezone.now() + timezone.timedelta(seconds=86400)
 
 
-def _default_message_expiry_time():
+def _default_message_expiry_time() -> datetime:
     return timezone.now() + timezone.timedelta(minutes=1)
 
 

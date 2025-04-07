@@ -3,12 +3,18 @@ url = "https://pypi.org/simple"
 verify_ssl = true
 name = "pypi"
 
-[dev-packages]
+
+[packages]
 asgiref = "==3.*"
 channels = "==4.*"
-django = "==5.*"
 msgpack = "==1.*"
 psycopg = "==3.*"
+
+[dev-packages]
+async-timeout = "==5.*"
+django = "==5.*"
+pylint = "==3.*"
+pytest = "==8.*"
 ruff = "0.*"
 tox = "==4.*"
 
