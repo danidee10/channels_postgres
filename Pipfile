@@ -3,7 +3,6 @@ url = "https://pypi.org/simple"
 verify_ssl = true
 name = "pypi"
 
-
 [packages]
 asgiref = "==3.*"
 channels = "==4.*"
@@ -14,6 +13,7 @@ psycopg = "==3.*"
 async-timeout = "==5.*"
 django = "==5.*"
 pylint = "==3.*"
+pylint-django = "==2.*"
 pytest = "==8.*"
 pytest-asyncio = "==0.*"
 pytest-cov = "==6.*"
@@ -26,4 +26,4 @@ python_version = "3.13"
 [scripts]
 tests = "tox"
 format = "ruff format ."
-start_postgres = "docker run --rm --name channels_postgres_db -e POSTGRES_PASSWORD=password -e POSTGRES_DB=postgres -e POSTGRES_USER=postgres -p 5432:5432 postgres:16-alpine"
+start_postgres = "docker run --rm --name channels_postgres_db -e POSTGRES_PASSWORD=password -e POSTGRES_DB=postgres -e POSTGRES_USER=postgres -p 5432:5432 postgres:17-alpine"

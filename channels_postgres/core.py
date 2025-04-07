@@ -1,31 +1,39 @@
+"""channels_postgres core"""
 
-import uuid
-import logging
-import sys
-import platform
 import asyncio
+import base64
+import hashlib
+import logging
+import platform
+import sys
+import typing
+import uuid
+
+import msgpack
+import psycopg
+from channels.layers import BaseChannelLayer
 from django.db.backends.postgresql.base import DatabaseWrapper
 
-import psycopg
-import msgpack
-from channels.layers import BaseChannelLayer
-
 from .db import DatabaseLayer
+
+try:
+    from cryptography.fernet import Fernet, MultiFernet
+
+    CRYPTOGRAPHY_INSTALLED = True
+except ImportError:
+    CRYPTOGRAPHY_INSTALLED = False
 
 # ProactorEventLoop is not supported by psycopg3 on windows
 # https://www.psycopg.org/psycopg3/docs/advanced/async.html
 if platform.system() == 'Windows':
-    asyncio.set_event_loop_policy(
-        asyncio.WindowsSelectorEventLoopPolicy()
-    )
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from asyncio import create_task  # noqa: F401
-
+from asyncio import create_task  # pylint: disable=C0411,C0413
 
 logger = logging.getLogger(__name__)
 
 
-async def asyncnext(ait):
+async def asyncnext(ait: typing.AsyncIterator[typing.Any]) -> typing.Any:
     """
     asyncnext is a helper function that returns the next item from an async iterator.
     It is a backport of the built-in anext function that was added in Python 3.10.
@@ -33,7 +41,7 @@ async def asyncnext(ait):
     if sys.version_info >= (3, 10):
         return await anext(ait)  # noqa: F821
 
-    return await ait.__anext__()
+    return await ait.__anext__()  # pylint: disable=C2801
 
 
 class PostgresChannelLayer(BaseChannelLayer):
@@ -50,22 +58,24 @@ class PostgresChannelLayer(BaseChannelLayer):
     This table has a trigger that sends out the `NOTIFY` signal.
     """
 
-    def __init__(
+    def __init__(  # pylint: disable=R0913,R0917
         self,
-        prefix='asgi',
-        expiry=60,
-        group_expiry=0,
-        symmetric_encryption_keys=None,
-        config=dict(),
-        **kwargs,
+        prefix: str = 'asgi',
+        expiry: int = 60,
+        group_expiry: int = 0,
+        symmetric_encryption_keys: typing.Any = None,
+        config: typing.Optional[dict[str, typing.Any]] = None,
+        **kwargs: typing.Any,
     ):
+        super().__init__(expiry=expiry)
+
         self.prefix = prefix
-        self.expiry = expiry
         self.group_expiry = group_expiry
         self.client_prefix = uuid.uuid4().hex[:5]
+        self.crypter: typing.Optional[MultiFernet] = None
         self._setup_encryption(symmetric_encryption_keys)
 
-        self.async_lib_config = config
+        self.async_lib_config = config if config else {}
 
         try:
             kwargs['OPTIONS']
@@ -74,29 +84,45 @@ class PostgresChannelLayer(BaseChannelLayer):
 
         db_wrapper = DatabaseWrapper(kwargs)
         self.db_params = db_wrapper.get_connection_params()
+
+        # Prevent psycopg from using the custom synchronous cursor factory from django
         self.db_params.pop('cursor_factory')
 
         self.django_db = DatabaseLayer(self.db_params, logger=logger)
 
-    def _setup_encryption(self, symmetric_encryption_keys):
+    def _setup_encryption(
+        self, symmetric_encryption_keys: typing.Union[list[bytes], list[str]]
+    ) -> None:
         # See if we can do encryption if they asked
         if symmetric_encryption_keys:
             if isinstance(symmetric_encryption_keys, (str, bytes)):
                 raise ValueError('symmetric_encryption_keys must be a list of possible keys')
-            try:
-                from cryptography.fernet import MultiFernet
-            except ImportError:
+            if not CRYPTOGRAPHY_INSTALLED:
                 raise ValueError('Cannot run with encryption without `cryptography` installed.')
+
             sub_fernets = [self.make_fernet(key) for key in symmetric_encryption_keys]
             self.crypter = MultiFernet(sub_fernets)
-        else:
-            self.crypter = None
 
-    """ Channel layer API """
+    def make_fernet(self, key: typing.Union[bytes, str]) -> Fernet:
+        """
+        Given a single encryption key, returns a Fernet instance using it.
+        """
+        if Fernet is None:
+            raise ValueError('Cannot run with encryption without `cryptography` installed.')
+
+        if isinstance(key, str):
+            key = key.encode('utf-8')
+        formatted_key = base64.urlsafe_b64encode(hashlib.sha256(key).digest())
+
+        return Fernet(formatted_key)
+
+    # ==============================================================
+    # Channel layer API
+    # ==============================================================
 
     extensions = ['groups', 'flush']
 
-    async def send(self, channel, message):
+    async def send(self, channel: str, message: dict[str, typing.Any]) -> None:
         """Send a message onto a (general or specific) channel."""
         # Typecheck
         assert isinstance(message, dict), 'message is not a dict'
@@ -106,15 +132,44 @@ class PostgresChannelLayer(BaseChannelLayer):
             assert self.valid_channel_name(channel), 'Channel name not valid'
         # Make sure the message does not contain reserved keys
         assert '__asgi_channel__' not in message
-        message = self.serialize(message)
+        serialized_message = self.serialize(message)
 
-        await self.django_db.send_to_channel('', message, self.expiry, channel=channel)
+        await self.django_db.send_to_channel('', serialized_message, self.expiry, channel=channel)
 
-    async def _get_message_from_channel(self, channel):
+    # async def _get_message_from_channel(self, channel):
+    #    retrieve_events_sql = f'LISTEN "{channel}";'
+
+    #    while True:
+    #        async with await psycopg.AsyncConnection.connect(
+    #            **self.db_params, autocommit=True
+    #        ) as conn:
+    #            message = await self.django_db.retrieve_queued_message_from_channel(conn, channel)
+    #            if not message:
+    #                await conn.execute(retrieve_events_sql)
+    #                try:
+    #                    event = await asyncnext(conn.notifies(timeout=5.0))
+    #                    message_id = event.payload
+    #                    message = await self.django_db.delete_message_returning_message(
+    #                        conn, message_id
+    #                    )
+    #                except StopAsyncIteration:
+    #                    logger.debug(
+    #                        'Expected timeout waiting for message on channel %s.
+    #                        'Dropping db connection and reconnecting.',
+    #                        channel,
+    #                    )
+    #                    continue
+
+    #                message = self.deserialize(message[0])
+    #                return message
+
+    async def _get_message_from_channel(self, channel: str) -> dict[str, typing.Any]:
         retrieve_events_sql = f'LISTEN "{channel}";'
 
         async with await psycopg.AsyncConnection.connect(**self.db_params, autocommit=True) as conn:
-            message = await self.django_db.retrieve_queued_message_from_channel(conn, channel)
+            message = await self.django_db.retrieve_non_expired_queued_message_from_channel(
+                conn, channel
+            )
             if not message:
                 await conn.execute(retrieve_events_sql)
 
@@ -122,11 +177,12 @@ class PostgresChannelLayer(BaseChannelLayer):
                 message_id = event.payload
                 message = await self.django_db.delete_message_returning_message(conn, message_id)
 
-            message = self.deserialize(message[0])
+            assert message is not None
+            deserialized_message = self.deserialize(message[0])
 
-            return message
+            return deserialized_message
 
-    async def receive(self, channel):
+    async def receive(self, channel: str) -> dict[str, typing.Any]:
         """
         Receive the first message that arrives on the channel.
         If more than one coroutine waits on the same channel, the first waiter
@@ -140,35 +196,39 @@ class PostgresChannelLayer(BaseChannelLayer):
             real_channel = self.non_local_name(channel)
             assert real_channel.endswith(self.client_prefix + '!'), 'Wrong client prefix'
 
-        await self.django_db.delete_expired_messages(expire=0)
-
         return await self._get_message_from_channel(channel)
 
-    async def new_channel(self, prefix='specific'):
+    async def new_channel(self, prefix: str = 'specific') -> str:
         """
         Returns a new channel name that can be used by something in our
         process as a specific channel.
         """
-        return '%s.%s!%s' % (prefix, self.client_prefix, uuid.uuid4().hex)
+        return f'{prefix}.{self.client_prefix}!{uuid.uuid4().hex}'
 
-    """ Flush extension """
+    # ==============================================================
+    # Flush extension
+    # ==============================================================
 
-    async def flush(self):
+    async def flush(self) -> None:
         """
         Unlisten on all channels and
         Deletes all messages and groups in the database
         """
         await self.django_db.flush()
 
-    """Groups extension """
+    # ==============================================================
+    # Groups extension
+    # ==============================================================
 
-    async def group_add(self, group, channel):
+    async def group_add(self, group: str, channel: str) -> None:
         """Adds the channel name to a group to the Postgres table."""
         group_key = self._group_key(group)
 
         await self.django_db.add_channel_to_group(group_key, channel, self.group_expiry)
 
-    async def group_discard(self, group, channel, expire=None):
+    async def group_discard(
+        self, group: str, channel: str, expire: typing.Optional[int] = None
+    ) -> None:
         """
         Removes the channel from the named group if it is in the group;
         does nothing otherwise (does not error)
@@ -192,7 +252,7 @@ class PostgresChannelLayer(BaseChannelLayer):
 
         create_task(self.django_db.delete_expired_messages(expire))
 
-    async def group_send(self, group, message):
+    async def group_send(self, group: str, message: dict[str, typing.Any]) -> None:
         """Sends a message to the entire group."""
         try:
             assert self.require_valid_group_name(group), 'Group name not valid'
@@ -201,27 +261,31 @@ class PostgresChannelLayer(BaseChannelLayer):
 
         group_key = self._group_key(group)
         # Retrieve list of all channel names related to the group
-        message = self.serialize(message)
+        serialized_message = self.serialize(message)
 
-        await self.django_db.send_to_channel(group_key, message, self.expiry)
+        await self.django_db.send_to_channel(group_key, serialized_message, self.expiry)
 
-    def _group_key(self, group):
+    def _group_key(self, group: str) -> str:
         """Common function to make the storage key for the group."""
-        return '%s:group:%s' % (self.prefix, group)
+        return f'{self.prefix}:group:{group}'
 
-    """ Serialization """
+    # ==============================================================
+    # Serialization
+    # ==============================================================
 
-    def serialize(self, message):
+    def serialize(self, message: dict[str, typing.Any]) -> bytes:
         """Serializes message to a byte string."""
-        value = msgpack.packb(message, use_bin_type=True)
+        value: bytes = msgpack.packb(message, use_bin_type=True)
         if self.crypter:
             value = self.crypter.encrypt(value)
 
         return value
 
-    def deserialize(self, message):
+    def deserialize(self, message: bytes) -> dict[str, typing.Any]:
         """Deserializes from a byte string."""
         if self.crypter:
             message = self.crypter.decrypt(message, self.expiry + 10)
 
-        return msgpack.unpackb(message, raw=False)
+        deserialized_message: dict[str, typing.Any] = msgpack.unpackb(message, raw=False)
+
+        return deserialized_message

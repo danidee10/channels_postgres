@@ -1,3 +1,5 @@
+"""channels_postgres django test settings"""
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',

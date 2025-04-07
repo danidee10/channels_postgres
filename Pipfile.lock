@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "e05a0bdbc8f4c0095577b520a4e9aebc1471fca1a43f927e029d343f07a1d390"
+            "sha256": "415c8edf32b69ef48788dc832557206dc3427dc254e5b480fa2c78a901166984"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -341,6 +341,23 @@
             "index": "pypi",
             "markers": "python_full_version >= '3.9.0'",
             "version": "==3.3.6"
+        },
+        "pylint-django": {
+            "hashes": [
+                "sha256:19e8c85a8573a04e3de7be2ba91e9a7c818ebf05e1b617be2bbae67a906b725f",
+                "sha256:359f68fe8c810ee6bc8e1ab4c83c19b15a43b234a24b08978f47a23462b5ce28"
+            ],
+            "index": "pypi",
+            "markers": "python_version >= '3.9' and python_version < '4.0'",
+            "version": "==2.6.1"
+        },
+        "pylint-plugin-utils": {
+            "hashes": [
+                "sha256:ae11664737aa2effbf26f973a9e0b6779ab7106ec0adc5fe104b0907ca04e507",
+                "sha256:d3cebf68a38ba3fba23a873809155562571386d4c1b03e5b4c4cc26c3eee93e4"
+            ],
+            "markers": "python_version >= '3.7' and python_version < '4.0'",
+            "version": "==0.8.2"
         },
         "pyproject-api": {
             "hashes": [
