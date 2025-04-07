@@ -1,7 +1,9 @@
+
 import uuid
 import logging
 import sys
-
+import platform
+import asyncio
 from django.db.backends.postgresql.base import DatabaseWrapper
 
 import psycopg
@@ -10,7 +12,14 @@ from channels.layers import BaseChannelLayer
 
 from .db import DatabaseLayer
 
-from asyncio import create_task
+# ProactorEventLoop is not supported by psycopg3 on windows
+# https://www.psycopg.org/psycopg3/docs/advanced/async.html
+if platform.system() == 'Windows':
+    asyncio.set_event_loop_policy(
+        asyncio.WindowsSelectorEventLoopPolicy()
+    )
+
+from asyncio import create_task  # noqa: F401
 
 
 logger = logging.getLogger(__name__)
@@ -130,6 +139,8 @@ class PostgresChannelLayer(BaseChannelLayer):
         if '!' in channel:
             real_channel = self.non_local_name(channel)
             assert real_channel.endswith(self.client_prefix + '!'), 'Wrong client prefix'
+
+        await self.django_db.delete_expired_messages(expire=0)
 
         return await self._get_message_from_channel(channel)
 

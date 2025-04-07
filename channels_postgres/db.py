@@ -56,7 +56,7 @@ class DatabaseLayer:
         expire = 60 * random.randint(10, 20)
         self.logger.debug('Deleting expired groups in %s seconds...', expire)
 
-        await asyncio.sleep(60)
+        await asyncio.sleep(expire)
 
         await GroupChannel.objects.filter(expire__lt=timezone.now()).adelete()
 
@@ -80,7 +80,7 @@ class DatabaseLayer:
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
                 )
-            RETURNING message;
+            RETURNING message, expire;
         """
         async with conn.cursor() as cursor:
             await cursor.execute(retrieve_queued_messages_sql, (channel,))
