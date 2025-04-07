@@ -1,0 +1,21 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[dev-packages]
+asgiref = "==3.*"
+channels = "==4.*"
+django = "==5.*"
+msgpack = "==1.*"
+psycopg = "==3.*"
+ruff = "0.*"
+tox = "==4.*"
+
+[requires]
+python_version = "3.13"
+
+[scripts]
+tests = "tox"
+format = "ruff format ."
+start_postgres = "docker run --rm --name channels_postgres_db -e POSTGRES_PASSWORD=password -e POSTGRES_DB=postgres -e POSTGRES_USER=postgres -p 5432:5432 postgres:16-alpine"

@@ -28,10 +28,10 @@ setup(
     include_package_data=True,
     python_requires='>=3.9',
     install_requires=[
-        'msgpack~=1.0.7',
+        'msgpack>=1.0.7,<2',
         'asgiref>=3.7.2,<4',
         'channels>=4.0.0,<5',
-        'aiopg~=1.4.0',
+        'psycopg>=3,<4',
     ],
     extras_require={'cryptography': crypto_requires, 'tests': test_requires},
 )

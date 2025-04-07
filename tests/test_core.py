@@ -1,4 +1,3 @@
-import sys
 import random
 import asyncio
 
@@ -9,22 +8,11 @@ import pytest
 import async_timeout
 from asgiref.sync import async_to_sync
 
-django.setup()  # noqa
-from channels_postgres.core import PostgresChannelLayer  # noqa
+django.setup()
+from channels_postgres.core import PostgresChannelLayer  # noqa: E402
 
 
-if sys.version_info < (3, 7):
-    create_task = asyncio.ensure_future
-else:
-    from asyncio import create_task
-
-
-@pytest.fixture(scope='module')
-def event_loop():
-    """Change default `function scoped` event_loop behaviour."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+from asyncio import create_task  # noqa: E402
 
 
 async def send_three_messages_with_delay(channel_name, channel_layer, delay):
