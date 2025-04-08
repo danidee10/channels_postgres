@@ -17,10 +17,32 @@ from asyncio import create_task  # noqa: E402  pylint: disable=C0411,C0413
 from channels_postgres.core import PostgresChannelLayer  # noqa: E402  pylint: disable=C0411,C0413
 
 
+class DefaultChannelsLayerConfig(typing.TypedDict):
+    """Default channels layer config."""
+
+    prefix: str
+    expiry: int
+    group_expiry: int
+    symmetric_encryption_keys: typing.Any
+    config: typing.Optional[dict[str, typing.Any]]
+
+
+default_layer_config: DefaultChannelsLayerConfig = {
+    'prefix': 'asgi',
+    'expiry': 60,
+    'group_expiry': 0,
+    'symmetric_encryption_keys': None,
+    'config': None,
+}
+
+
 @pytest.fixture(name='channel_layer')
 async def channel_layer_fixture() -> typing.AsyncGenerator[PostgresChannelLayer, None]:
     """Channel layer fixture that flushes automatically."""
-    channel_layer = PostgresChannelLayer(**settings.DATABASES['channels_postgres'])
+    db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
+    assert db_params is not None
+
+    channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
     yield channel_layer
     await channel_layer.flush()
 
@@ -102,7 +124,9 @@ def test_double_receive(channel_layer: PostgresChannelLayer) -> None:
     Makes sure we can receive from two different event loops using
     process-local channel names.
     """
-    channel_layer = PostgresChannelLayer(**settings.DATABASES['channels_postgres'])
+    db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
+    assert db_params is not None
+    channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
 
     channel_name_1 = async_to_sync(channel_layer.new_channel)()
     channel_name_2 = async_to_sync(channel_layer.new_channel)()
@@ -261,9 +285,12 @@ async def test_random_reset__client_prefix() -> None:
     Makes sure resetting random seed does not make us reuse client_prefixes.
     """
     random.seed(1)
-    channel_layer_1 = PostgresChannelLayer(**settings.DATABASES['channels_postgres'])
+    db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
+    assert db_params is not None
+
+    channel_layer_1 = PostgresChannelLayer(**default_layer_config, **db_params)
     random.seed(1)
-    channel_layer_2 = PostgresChannelLayer(**settings.DATABASES['channels_postgres'])
+    channel_layer_2 = PostgresChannelLayer(**default_layer_config, **db_params)
     assert channel_layer_1.client_prefix != channel_layer_2.client_prefix
 
 
@@ -278,7 +305,11 @@ async def test_message_expiry__earliest_message_expires(
     """
     expiry = 3
     delay = 2
-    channel_layer = PostgresChannelLayer(**settings.DATABASES['channels_postgres'], expiry=expiry)
+    db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
+    assert db_params is not None
+
+    default_layer_config['expiry'] = expiry
+    channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
     channel_name = await channel_layer.new_channel()
 
     task = asyncio.ensure_future(send_three_messages_with_delay(channel_name, channel_layer, delay))
@@ -308,7 +339,11 @@ async def test_message_expiry__all_messages_under_expiration_time() -> None:
     """
     expiry = 3
     delay = 1
-    channel_layer = PostgresChannelLayer(**settings.DATABASES['channels_postgres'], expiry=expiry)
+    db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
+    assert db_params is not None
+
+    default_layer_config['expiry'] = expiry
+    channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
     channel_name = await channel_layer.new_channel()
 
     task = asyncio.ensure_future(send_three_messages_with_delay(channel_name, channel_layer, delay))
@@ -337,7 +372,11 @@ async def test_message_expiry__group_send() -> None:
     """
     expiry = 3
     delay = 2
-    channel_layer = PostgresChannelLayer(**settings.DATABASES['channels_postgres'], expiry=expiry)
+    db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
+    assert db_params is not None
+
+    default_layer_config['expiry'] = expiry
+    channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
     channel_name = await channel_layer.new_channel()
 
     await channel_layer.group_add('test-group', channel_name)
@@ -372,7 +411,11 @@ async def test_message_expiry__group_send__one_channel_expires_message() -> None
     expiry = 4
     delay = 1
 
-    channel_layer = PostgresChannelLayer(**settings.DATABASES['channels_postgres'], expiry=expiry)
+    db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
+    assert db_params is not None
+
+    default_layer_config['expiry'] = expiry
+    channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
     channel_1 = await channel_layer.new_channel()
     channel_2 = await channel_layer.new_channel(prefix='channel_2')
 
@@ -425,7 +468,10 @@ def test_default_group_key_format() -> None:
     """
     Tests the default group key format.
     """
-    channel_layer = PostgresChannelLayer(**settings.DATABASES['channels_postgres'])
+    db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
+    assert db_params is not None
+
+    channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
     group_name = channel_layer._group_key('test_group')  # pylint: disable=W0212
     assert group_name == 'asgi:group:test_group'
 
@@ -434,8 +480,10 @@ def test_custom_group_key_format() -> None:
     """
     Tests the custom group key format.
     """
-    channel_layer = PostgresChannelLayer(
-        **settings.DATABASES['channels_postgres'], prefix='test_prefix'
-    )
+    db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
+    assert db_params is not None
+
+    default_layer_config['prefix'] = 'test_prefix'
+    channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
     group_name = channel_layer._group_key('test_group')  # pylint: disable=W0212
     assert group_name == 'test_prefix:group:test_group'

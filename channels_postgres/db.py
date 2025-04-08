@@ -4,17 +4,17 @@ import asyncio
 import logging
 import random
 import typing
+from datetime import timedelta
 
 import psycopg
 from django.utils import timezone
-from django.utils.timezone import timedelta
+from psycopg import AsyncConnection
+from psycopg.rows import tuple_row
 
 from .models import GroupChannel, Message
 
 if typing.TYPE_CHECKING:
     from logging import Logger
-
-    from psycopg import AsyncConnection
 
 
 class DatabaseLayer:
@@ -28,7 +28,7 @@ class DatabaseLayer:
 
     def __init__(
         self,
-        db_params: dict[str, str],
+        db_params: typing.Mapping[str, typing.Union[str, int]],
         using: str = 'channels_postgres',
         logger: 'Logger' = logging.getLogger('channels_postgres.database'),
     ) -> None:
@@ -95,7 +95,7 @@ class DatabaseLayer:
         await Message.objects.filter(expire__lt=timezone.now()).adelete()
 
     async def retrieve_non_expired_queued_message_from_channel(
-        self, conn: 'AsyncConnection', channel: str
+        self, conn: AsyncConnection, channel: str
     ) -> typing.Optional[tuple[bytes]]:
         """Retrieves a non-expired message from a channel"""
         retrieve_queued_messages_sql = """
@@ -117,7 +117,7 @@ class DatabaseLayer:
             return typing.cast(typing.Optional[tuple[bytes]], message)
 
     async def delete_message_returning_message(
-        self, conn: 'AsyncConnection', message_id: int
+        self, conn: AsyncConnection, message_id: int
     ) -> typing.Optional[tuple[bytes]]:
         """Deletes a message from the database and returns the message"""
         delete_message_returning_message_sql = (
@@ -138,7 +138,10 @@ class DatabaseLayer:
         Flushes the channel layer by unlistening from all channels
         and truncating the message and group tables
         """
-        async with await psycopg.AsyncConnection.connect(**self.db_params, autocommit=True) as conn:
+        conn_info = psycopg.conninfo.make_conninfo(conninfo='', **self.db_params)
+        async with await AsyncConnection.connect(
+            conninfo=conn_info, row_factory=tuple_row, autocommit=True
+        ) as conn:
             await conn.execute('UNLISTEN *;')
             await conn.execute(f'TRUNCATE TABLE {Message._meta.db_table}')  # pylint: disable=W0212
             await conn.execute(f'TRUNCATE TABLE {GroupChannel._meta.db_table}')  # pylint: disable=W0212

@@ -12,6 +12,7 @@ psycopg = "==3.*"
 [dev-packages]
 async-timeout = "==5.*"
 django = "==5.*"
+django-stubs = {extras = ["compatible-mypy"], version = "==5.*"}
 pylint = "==3.*"
 pylint-django = "==2.*"
 pytest = "==8.*"

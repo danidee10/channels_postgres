@@ -26,11 +26,14 @@ except ImportError:
 # ProactorEventLoop is not supported by psycopg3 on windows
 # https://www.psycopg.org/psycopg3/docs/advanced/async.html
 if platform.system() == 'Windows':
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())  # type: ignore
 
 from asyncio import create_task  # pylint: disable=C0411,C0413
 
 logger = logging.getLogger(__name__)
+
+if typing.TYPE_CHECKING:
+    pass
 
 
 async def asyncnext(ait: typing.AsyncIterator[typing.Any]) -> typing.Any:
@@ -44,7 +47,7 @@ async def asyncnext(ait: typing.AsyncIterator[typing.Any]) -> typing.Any:
     return await ait.__anext__()  # pylint: disable=C2801
 
 
-class PostgresChannelLayer(BaseChannelLayer):
+class PostgresChannelLayer(BaseChannelLayer):  # type: ignore
     """
     Postgres channel layer.
 
@@ -65,7 +68,7 @@ class PostgresChannelLayer(BaseChannelLayer):
         group_expiry: int = 0,
         symmetric_encryption_keys: typing.Any = None,
         config: typing.Optional[dict[str, typing.Any]] = None,
-        **kwargs: typing.Any,
+        **kwargs: dict[str, typing.Any],
     ):
         super().__init__(expiry=expiry)
 
@@ -87,6 +90,7 @@ class PostgresChannelLayer(BaseChannelLayer):
 
         # Prevent psycopg from using the custom synchronous cursor factory from django
         self.db_params.pop('cursor_factory')
+        self.db_params.pop('context')
 
         self.django_db = DatabaseLayer(self.db_params, logger=logger)
 
@@ -140,8 +144,9 @@ class PostgresChannelLayer(BaseChannelLayer):
     #    retrieve_events_sql = f'LISTEN "{channel}";'
 
     #    while True:
+    #        conn_info = psycopg.conninfo.make_conninfo(conninfo='', **self.db_params)
     #        async with await psycopg.AsyncConnection.connect(
-    #            **self.db_params, autocommit=True
+    #            conninfo=conn_info, autocommit=True
     #        ) as conn:
     #            message = await self.django_db.retrieve_queued_message_from_channel(conn, channel)
     #            if not message:
@@ -166,7 +171,10 @@ class PostgresChannelLayer(BaseChannelLayer):
     async def _get_message_from_channel(self, channel: str) -> dict[str, typing.Any]:
         retrieve_events_sql = f'LISTEN "{channel}";'
 
-        async with await psycopg.AsyncConnection.connect(**self.db_params, autocommit=True) as conn:
+        conn_info = psycopg.conninfo.make_conninfo(conninfo='', **self.db_params)
+        async with await psycopg.AsyncConnection.connect(
+            conninfo=conn_info, autocommit=True
+        ) as conn:
             message = await self.django_db.retrieve_non_expired_queued_message_from_channel(
                 conn, channel
             )
