@@ -16,7 +16,7 @@ dependencies = [
   "msgpack>=1.0.7,<2",
   "asgiref>=3.7.2,<4",
   "channels>=4.0.0,<5",
-  "psycopg>=3,<4"
+  "psycopg[pool]>=3,<4",
 ]
 
 [project.urls]

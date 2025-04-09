@@ -10,7 +10,7 @@ import typing
 import uuid
 
 import msgpack
-import psycopg
+from asgiref.sync import sync_to_async
 from channels.layers import BaseChannelLayer
 from django.db.backends.postgresql.base import DatabaseWrapper
 
@@ -67,7 +67,6 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore
         expiry: int = 60,
         group_expiry: int = 0,
         symmetric_encryption_keys: typing.Any = None,
-        config: typing.Optional[dict[str, typing.Any]] = None,
         **kwargs: dict[str, typing.Any],
     ):
         super().__init__(expiry=expiry)
@@ -77,8 +76,6 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore
         self.client_prefix = uuid.uuid4().hex[:5]
         self.crypter: typing.Optional[MultiFernet] = None
         self._setup_encryption(symmetric_encryption_keys)
-
-        self.async_lib_config = config if config else {}
 
         try:
             kwargs['OPTIONS']
@@ -92,7 +89,8 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore
         self.db_params.pop('cursor_factory')
         self.db_params.pop('context')
 
-        self.django_db = DatabaseLayer(self.db_params, logger=logger)
+        psycopg_options = kwargs.get('PYSCOPG_OPTIONS', {})
+        self.django_db = DatabaseLayer(psycopg_options, self.db_params, logger=logger)
 
     def _setup_encryption(
         self, symmetric_encryption_keys: typing.Union[list[bytes], list[str]]
@@ -107,7 +105,7 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore
             sub_fernets = [self.make_fernet(key) for key in symmetric_encryption_keys]
             self.crypter = MultiFernet(sub_fernets)
 
-    def make_fernet(self, key: typing.Union[bytes, str]) -> Fernet:
+    def make_fernet(self, key: typing.Union[bytes, str]) -> 'Fernet':
         """
         Given a single encryption key, returns a Fernet instance using it.
         """
@@ -171,19 +169,20 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore
     async def _get_message_from_channel(self, channel: str) -> dict[str, typing.Any]:
         retrieve_events_sql = f'LISTEN "{channel}";'
 
-        conn_info = psycopg.conninfo.make_conninfo(conninfo='', **self.db_params)
-        async with await psycopg.AsyncConnection.connect(
-            conninfo=conn_info, autocommit=True
-        ) as conn:
-            message = await self.django_db.retrieve_non_expired_queued_message_from_channel(
-                conn, channel
-            )
+        db_pool = await self.django_db.get_db_pool(db_params=self.db_params)
+        async with db_pool.connection() as conn:
+            message = await self.django_db.retrieve_non_expired_queued_message_from_channel(channel)
             if not message:
+                # Clear pending messages from the notifies generator from other connections
+                await conn.execute('UNLISTEN *;')
+                # without async_to_sync, Deque.clear() blocks the event loop
+                await sync_to_async(conn._notifies_backlog.clear)()
+
                 await conn.execute(retrieve_events_sql)
 
                 event = await asyncnext(conn.notifies())
                 message_id = event.payload
-                message = await self.django_db.delete_message_returning_message(conn, message_id)
+                message = await self.django_db.delete_message_returning_message(message_id)
 
             assert message is not None
             deserialized_message = self.deserialize(message[0])

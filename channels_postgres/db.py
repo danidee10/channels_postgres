@@ -4,17 +4,25 @@ import asyncio
 import logging
 import random
 import typing
+from dataclasses import dataclass
 from datetime import timedelta
 
 import psycopg
+import psycopg_pool
 from django.utils import timezone
-from psycopg import AsyncConnection
-from psycopg.rows import tuple_row
 
 from .models import GroupChannel, Message
 
 if typing.TYPE_CHECKING:
     from logging import Logger
+
+
+connection_pool: typing.Optional[psycopg_pool.ConnectionPool] = None
+
+
+@dataclass
+class PsycopgOptions:
+    connection_class: typing.Type[psycopg_pool.ConnectionPool] = psycopg_pool.AsyncConnectionPool
 
 
 class DatabaseLayer:
@@ -28,6 +36,7 @@ class DatabaseLayer:
 
     def __init__(
         self,
+        psycopg_options: dict,
         db_params: typing.Mapping[str, typing.Union[str, int]],
         using: str = 'channels_postgres',
         logger: 'Logger' = logging.getLogger('channels_postgres.database'),
@@ -35,6 +44,28 @@ class DatabaseLayer:
         self.logger = logger
         self.using = using
         self.db_params = db_params
+        self.psycopg_options = PsycopgOptions(**psycopg_options)
+
+    async def get_db_pool(
+        self, db_params: dict[str, typing.Any]
+    ) -> psycopg_pool.AsyncConnectionPool:
+        global connection_pool
+        if connection_pool is not None:
+            return connection_pool
+
+        async def _configure_connection(conn: psycopg.AsyncConnection) -> None:
+            await conn.set_autocommit(True)
+
+        conn_info = psycopg.conninfo.make_conninfo(conninfo='', **db_params)
+        pool_connection_class = self.psycopg_options.connection_class
+        connection_pool = pool_connection_class(
+            conninfo=conn_info,
+            open=False,
+            configure=_configure_connection,
+        )
+        await connection_pool.open()
+
+        return connection_pool
 
     async def _retrieve_group_channels(self, group_key: str) -> list[str]:
         query = GroupChannel.objects.filter(group_key=group_key).distinct('group_key', 'channel')
@@ -95,7 +126,7 @@ class DatabaseLayer:
         await Message.objects.filter(expire__lt=timezone.now()).adelete()
 
     async def retrieve_non_expired_queued_message_from_channel(
-        self, conn: AsyncConnection, channel: str
+        self, channel: str
     ) -> typing.Optional[tuple[bytes]]:
         """Retrieves a non-expired message from a channel"""
         retrieve_queued_messages_sql = """
@@ -110,24 +141,28 @@ class DatabaseLayer:
                 )
             RETURNING message;
         """
-        async with conn.cursor() as cursor:
-            await cursor.execute(retrieve_queued_messages_sql, (channel,))
-            message = await cursor.fetchone()
+        db_pool = await self.get_db_pool(db_params=self.db_params)
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(retrieve_queued_messages_sql, (channel,))
+                message = await cursor.fetchone()
 
-            return typing.cast(typing.Optional[tuple[bytes]], message)
+                return typing.cast(typing.Optional[tuple[bytes]], message)
 
     async def delete_message_returning_message(
-        self, conn: AsyncConnection, message_id: int
+        self, message_id: int
     ) -> typing.Optional[tuple[bytes]]:
         """Deletes a message from the database and returns the message"""
         delete_message_returning_message_sql = (
             'DELETE FROM channels_postgres_message WHERE id=%s RETURNING message;'
         )
 
-        async with conn.cursor() as cursor:
-            await cursor.execute(delete_message_returning_message_sql, (message_id,))
+        db_pool = await self.get_db_pool(db_params=self.db_params)
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(delete_message_returning_message_sql, (message_id,))
 
-            return await cursor.fetchone()
+                return await cursor.fetchone()
 
     async def delete_channel_group(self, group_key: str, channel: str) -> None:
         """Deletes a channel from a group"""
@@ -135,13 +170,12 @@ class DatabaseLayer:
 
     async def flush(self) -> None:
         """
-        Flushes the channel layer by unlistening from all channels
+        Flushes the channel layer by
+        unlistening from all channels
         and truncating the message and group tables
         """
-        conn_info = psycopg.conninfo.make_conninfo(conninfo='', **self.db_params)
-        async with await AsyncConnection.connect(
-            conninfo=conn_info, row_factory=tuple_row, autocommit=True
-        ) as conn:
+        db_pool = await self.get_db_pool(db_params=self.db_params)
+        async with db_pool.connection() as conn:
             await conn.execute('UNLISTEN *;')
             await conn.execute(f'TRUNCATE TABLE {Message._meta.db_table}')  # pylint: disable=W0212
             await conn.execute(f'TRUNCATE TABLE {GroupChannel._meta.db_table}')  # pylint: disable=W0212

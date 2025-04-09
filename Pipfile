@@ -7,7 +7,7 @@ name = "pypi"
 asgiref = "==3.*"
 channels = "==4.*"
 msgpack = "==1.*"
-psycopg = "==3.*"
+psycopg = {extras = ["pool"], version = "==3.*"}
 
 [dev-packages]
 async-timeout = "==5.*"
