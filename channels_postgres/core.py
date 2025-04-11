@@ -181,8 +181,27 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore
                 await conn.execute(retrieve_events_sql)
 
                 event = await asyncnext(conn.notifies())
-                message_id = event.payload
-                message = await self.django_db.delete_message_returning_message(message_id)
+                split_payload = event.payload.split(':')
+
+                if len(split_payload) == 2:
+                    # The message is <= 7168 bytes, we don't need to fetch the message from the database
+                    message_id, base64_message = split_payload
+
+                    # There's is a problem with asyncio in python 3.9 where the base64.b64decode
+                    # somehow breaks the event loop and causes psycopg to have a different event loop
+                    # than the one that is running the receive coroutine.
+                    if sys.version_info >= (3, 10):
+                        message = (base64.b64decode(base64_message),)
+                    else:
+                        loop = asyncio.get_running_loop()
+                        message_bytes = await loop.run_in_executor(
+                            None, base64.b64decode, base64_message
+                        )
+                        message = (message_bytes,)
+
+                else:
+                    message_id = split_payload[0]
+                    message = await self.django_db.delete_message_returning_message(message_id)
 
             assert message is not None
             deserialized_message = self.deserialize(message[0])
