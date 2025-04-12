@@ -16,12 +16,12 @@ class Migration(migrations.Migration):
             payload text;
         BEGIN
             IF octet_length(NEW.message) <= 7168 THEN
-                payload := NEW.id::text || ':' || encode(NEW.message, 'base64');
+                payload := NEW.id::text || ':' || NEW.channel::text || ':' || encode(NEW.message, 'base64');
             ELSE
-                payload := NEW.id::text;
+                payload := NEW.id::text || ':' || NEW.channel::text;
             END IF;
 
-            PERFORM pg_notify(NEW.channel, payload);
+            PERFORM pg_notify('channels_postgres_message', payload);
             RETURN NEW;
         END;
         $$ LANGUAGE plpgsql;

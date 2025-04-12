@@ -17,6 +17,12 @@ if typing.TYPE_CHECKING:
     from logging import Logger
 
 
+# Enable pool logging
+# logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+# logging.getLogger('psycopg.pool').setLevel(logging.DEBUG)
+
+
+is_creating_connection_pool = asyncio.Lock()
 connection_pool: typing.Optional[psycopg_pool.ConnectionPool] = None
 
 
@@ -50,22 +56,32 @@ class DatabaseLayer:
         self, db_params: dict[str, typing.Any]
     ) -> psycopg_pool.AsyncConnectionPool:
         global connection_pool
-        if connection_pool is not None:
-            return connection_pool
 
         async def _configure_connection(conn: psycopg.AsyncConnection) -> None:
             await conn.set_autocommit(True)
 
-        conn_info = psycopg.conninfo.make_conninfo(conninfo='', **db_params)
-        pool_connection_class = self.psycopg_options.connection_class
-        connection_pool = pool_connection_class(
-            conninfo=conn_info,
-            open=False,
-            configure=_configure_connection,
-        )
-        await connection_pool.open()
+        async with is_creating_connection_pool:
+            if connection_pool is not None:
+                self.logger.debug('Pool %s already exists', connection_pool.name)
 
-        return connection_pool
+                pool_stats = connection_pool.get_stats()
+                self.logger.debug('Pool stats: %s', pool_stats)
+
+                return connection_pool
+
+            conn_info = psycopg.conninfo.make_conninfo(conninfo='', **db_params)
+            pool_connection_class = self.psycopg_options.connection_class
+            connection_pool = pool_connection_class(
+                conninfo=conn_info,
+                open=False,
+                configure=_configure_connection,
+                min_size=2,
+            )
+            await connection_pool.open(wait=True)
+
+            self.logger.debug('Pool %s created', connection_pool.name)
+
+            return connection_pool
 
     async def _retrieve_group_channels(self, group_key: str) -> list[str]:
         query = GroupChannel.objects.filter(group_key=group_key).distinct('group_key', 'channel')
@@ -170,12 +186,9 @@ class DatabaseLayer:
 
     async def flush(self) -> None:
         """
-        Flushes the channel layer by
-        unlistening from all channels
-        and truncating the message and group tables
+        Flushes the channel layer by truncating the message and group tables
         """
         db_pool = await self.get_db_pool(db_params=self.db_params)
         async with db_pool.connection() as conn:
-            await conn.execute('UNLISTEN *;')
             await conn.execute(f'TRUNCATE TABLE {Message._meta.db_table}')  # pylint: disable=W0212
             await conn.execute(f'TRUNCATE TABLE {GroupChannel._meta.db_table}')  # pylint: disable=W0212

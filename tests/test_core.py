@@ -6,6 +6,7 @@ import typing
 
 import async_timeout
 import django
+import psycopg
 import pytest
 from asgiref.sync import async_to_sync
 from django.conf import settings
@@ -13,6 +14,8 @@ from django.conf import settings
 django.setup()
 
 from asyncio import create_task  # noqa: E402  pylint: disable=C0411,C0413
+
+from django.db.backends.postgresql.base import DatabaseWrapper
 
 from channels_postgres.core import PostgresChannelLayer  # noqa: E402  pylint: disable=C0411,C0413
 
@@ -36,14 +39,32 @@ default_layer_config: DefaultChannelsLayerConfig = {
 }
 
 
-@pytest.fixture(name='channel_layer')
+@pytest.fixture(scope='module', autouse=True)
+async def shutdown_listener() -> typing.AsyncGenerator[None, None]:
+    """
+    Fixture that shuts down the listener
+    """
+    yield
+
+    db_wrapper = DatabaseWrapper(settings.DATABASES['channels_postgres'])
+    db_params = db_wrapper.get_connection_params()
+    db_params.pop('cursor_factory')
+    db_params.pop('context')
+    conn_info = psycopg.conninfo.make_conninfo(conninfo='', **db_params)
+    async with await psycopg.AsyncConnection.connect(conninfo=conn_info, autocommit=True) as conn:
+        await conn.execute("NOTIFY channels_postgres_message, '1:shutdown';")
+
+
+@pytest.fixture(name='channel_layer', autouse=True)
 async def channel_layer_fixture() -> typing.AsyncGenerator[PostgresChannelLayer, None]:
     """Channel layer fixture that flushes automatically."""
     db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
     assert db_params is not None
 
     channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
+
     yield channel_layer
+
     await channel_layer.flush()
 
 
@@ -96,7 +117,7 @@ async def test_send_receive_basic(channel_layer: PostgresChannelLayer) -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_receive(channel_layer: PostgresChannelLayer) -> None:
+async def test_send_received(channel_layer: PostgresChannelLayer) -> None:
     """
     Similar to the `test_send_receive_basic`
     but mimics a real world scenario where clients connect first
@@ -118,7 +139,6 @@ async def test_send_receive(channel_layer: PostgresChannelLayer) -> None:
     assert message['text'] == 'Hello world!'
 
 
-@pytest.mark.parametrize('channel_layer', [None])  # Fixture can't handle sync
 def test_double_receive(channel_layer: PostgresChannelLayer) -> None:
     """
     Makes sure we can receive from two different event loops using
