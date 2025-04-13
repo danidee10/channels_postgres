@@ -9,6 +9,7 @@ from datetime import timedelta
 
 import psycopg
 import psycopg_pool
+import psycopg_pool.base
 from django.utils import timezone
 
 from .models import GroupChannel, Message
@@ -22,13 +23,21 @@ if typing.TYPE_CHECKING:
 # logging.getLogger('psycopg.pool').setLevel(logging.DEBUG)
 
 
+# A global variable is used to ensure only one connection pool is created
+# regardless of the amount of threads
+# And also to prevent RuntimeErrors when the event loop is closed after running tests
+# and psycopg Async workers are not cleaned up properly
 is_creating_connection_pool = asyncio.Lock()
-connection_pool: typing.Optional[psycopg_pool.ConnectionPool] = None
+connection_pool: typing.Optional[psycopg_pool.AsyncConnectionPool] = None
 
 
 @dataclass
 class PsycopgOptions:
-    connection_class: typing.Type[psycopg_pool.ConnectionPool] = psycopg_pool.AsyncConnectionPool
+    """holds configuration options for psycopg"""
+
+    connection_class: typing.Type[psycopg_pool.AsyncConnectionPool] = (
+        psycopg_pool.AsyncConnectionPool
+    )
 
 
 class DatabaseLayer:
@@ -42,8 +51,8 @@ class DatabaseLayer:
 
     def __init__(
         self,
-        psycopg_options: dict,
-        db_params: typing.Mapping[str, typing.Union[str, int]],
+        psycopg_options: dict[str, typing.Any],
+        db_params: dict[str, typing.Any],
         using: str = 'channels_postgres',
         logger: 'Logger' = logging.getLogger('channels_postgres.database'),
     ) -> None:
@@ -55,7 +64,13 @@ class DatabaseLayer:
     async def get_db_pool(
         self, db_params: dict[str, typing.Any]
     ) -> psycopg_pool.AsyncConnectionPool:
-        global connection_pool
+        """
+        Returns a connection pool for the database
+
+        Uses a `Lock` to ensure that only one coroutine can create the connection pool
+        Others have to wait until the connection pool is created
+        """
+        global connection_pool  # pylint: disable=W0603
 
         async def _configure_connection(conn: psycopg.AsyncConnection) -> None:
             await conn.set_autocommit(True)
@@ -83,7 +98,8 @@ class DatabaseLayer:
 
             return connection_pool
 
-    async def _retrieve_group_channels(self, group_key: str) -> list[str]:
+    async def retrieve_group_channels(self, group_key: str) -> list[str]:
+        """Retrieves all channels for a group"""
         query = GroupChannel.objects.filter(group_key=group_key).distinct('group_key', 'channel')
         channels = []
         async for channel in query:
@@ -100,17 +116,18 @@ class DatabaseLayer:
     ) -> None:
         """Send a message to a channel/channels (if no channel is specified)."""
         if channel is None:
-            channels = await self._retrieve_group_channels(group_key)
+            channels = await self.retrieve_group_channels(group_key)
             if not channels:
                 self.logger.warning('Group: %s does not exist, did you call group_add?', group_key)
                 return
         else:
             channels = [channel]
 
+        expiry_datetime = timezone.now() + timedelta(seconds=expire)
         # Bulk insert messages
-        db_expiry = timezone.now() + timedelta(seconds=expire)
         messages = [
-            Message(channel=channel, message=message, expire=db_expiry) for channel in channels
+            Message(channel=channel, message=message, expire=expiry_datetime)
+            for channel in channels
         ]
 
         await Message.objects.abulk_create(messages)
@@ -140,6 +157,31 @@ class DatabaseLayer:
         await asyncio.sleep(expire)
 
         await Message.objects.filter(expire__lt=timezone.now()).adelete()
+
+    async def retrieve_non_expired_queued_messages(self) -> list[tuple[str, str, bytes, str]]:
+        """
+        Retrieves all non-expired messages from the database
+
+        NOTE: Postgres doesn't support ORDER BY for `RETURNING`
+        queries. Even if the inner query is ordered, the returning
+        clause is not guaranteed to be ordered
+        """
+        retrieve_queued_messages_sql = """
+            DELETE FROM channels_postgres_message
+            WHERE id IN (
+                SELECT id
+                FROM channels_postgres_message
+                WHERE expire > NOW()
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING id::text, channel, message, extract(epoch from expire)::text
+        """
+        db_pool = await self.get_db_pool(db_params=self.db_params)
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(retrieve_queued_messages_sql)
+
+                return await cursor.fetchall()
 
     async def retrieve_non_expired_queued_message_from_channel(
         self, channel: str

@@ -1,4 +1,4 @@
-from django.db import migrations
+from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
@@ -16,7 +16,7 @@ class Migration(migrations.Migration):
             payload text;
         BEGIN
             IF octet_length(NEW.message) <= 7168 THEN
-                payload := NEW.id::text || ':' || NEW.channel::text || ':' || encode(NEW.message, 'base64');
+                payload := NEW.id::text || ':' || NEW.channel::text || ':' || encode(NEW.message, 'base64') || ':' || extract(epoch from NEW.expire)::text;
             ELSE
                 payload := NEW.id::text || ':' || NEW.channel::text;
             END IF;
@@ -41,4 +41,11 @@ class Migration(migrations.Migration):
         DROP TRIGGER IF EXISTS channels_postgres_notify_trigger ON channels_postgres_message;
     """  # noqa
 
-    operations = [migrations.RunSQL(sql=setup_database_sql, reverse_sql=reverse_setup_database_sql)]
+    operations = [
+        migrations.AddField(
+            model_name='message',
+            name='notify',
+            field=models.BooleanField(default=True),
+        ),
+        migrations.RunSQL(sql=setup_database_sql, reverse_sql=reverse_setup_database_sql),
+    ]

@@ -37,3 +37,4 @@ class Message(models.Model):
     channel = models.CharField(max_length=100)
     message = models.BinaryField(max_length=1000)
     expire = models.DateTimeField(default=_default_message_expiry_time)
+    notify = models.BooleanField(default=True)

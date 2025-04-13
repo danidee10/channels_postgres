@@ -15,22 +15,13 @@ django.setup()
 
 from asyncio import create_task  # noqa: E402  pylint: disable=C0411,C0413
 
-from django.db.backends.postgresql.base import DatabaseWrapper
+from django.db.backends.postgresql.base import (  # noqa: E402  pylint: disable=C0411,C0413
+    DatabaseWrapper,
+)
 
 from channels_postgres.core import PostgresChannelLayer  # noqa: E402  pylint: disable=C0411,C0413
 
-
-class DefaultChannelsLayerConfig(typing.TypedDict):
-    """Default channels layer config."""
-
-    prefix: str
-    expiry: int
-    group_expiry: int
-    symmetric_encryption_keys: typing.Any
-    config: typing.Optional[dict[str, typing.Any]]
-
-
-default_layer_config: DefaultChannelsLayerConfig = {
+default_layer_config: dict[str, typing.Any] = {
     'prefix': 'asgi',
     'expiry': 60,
     'group_expiry': 0,
@@ -39,7 +30,7 @@ default_layer_config: DefaultChannelsLayerConfig = {
 }
 
 
-@pytest.fixture(scope='module', autouse=True)
+@pytest.fixture(scope='function', autouse=True)
 async def shutdown_listener() -> typing.AsyncGenerator[None, None]:
     """
     Fixture that shuts down the listener
@@ -132,13 +123,14 @@ async def test_send_received(channel_layer: PostgresChannelLayer) -> None:
             'test-channel-2', {'type': 'test.message_connect_wait', 'text': 'Hello world!'}
         )
 
-    await asyncio.wait([task, create_task(chained_tasks())], timeout=2)
+    await asyncio.wait([task, create_task(chained_tasks())])
 
     message = task.result()
     assert message['type'] == 'test.message_connect_wait'
     assert message['text'] == 'Hello world!'
 
 
+@pytest.mark.parametrize('channel_layer', [None])  # Fixture can't handle sync
 def test_double_receive(channel_layer: PostgresChannelLayer) -> None:
     """
     Makes sure we can receive from two different event loops using

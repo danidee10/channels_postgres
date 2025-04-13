@@ -5,11 +5,9 @@ import base64
 import hashlib
 import logging
 import platform
-import sys
-import threading
+import time
 import typing
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 
 import msgpack
 import psycopg
@@ -20,10 +18,8 @@ from .db import DatabaseLayer
 
 try:
     from cryptography.fernet import Fernet, MultiFernet
-
-    CRYPTOGRAPHY_INSTALLED = True
 except ImportError:
-    CRYPTOGRAPHY_INSTALLED = False
+    MultiFernet = Fernet = None  # type: ignore
 
 # ProactorEventLoop is not supported by psycopg3 on windows
 # https://www.psycopg.org/psycopg3/docs/advanced/async.html
@@ -34,30 +30,12 @@ from asyncio import create_task  # pylint: disable=C0411,C0413
 
 logger = logging.getLogger(__name__)
 
-if typing.TYPE_CHECKING:
-    pass
+
+event_mapping_lock = asyncio.Lock()
+ASYNCIO_EVENT_CHANNEL_MAPPING: dict[str, asyncio.Queue[str]] = {}
 
 
-ASYNCIO_EVENT_CHANNEL_MAPPING: dict[str, asyncio.Future[str]] = {}
-AsyncGeneratorType = typing.TypeVar('AsyncGeneratorType')
-
-listener_task_is_running = threading.Event()
-
-
-async def asyncnext(
-    async_generator: typing.AsyncGenerator[AsyncGeneratorType, None],
-) -> AsyncGeneratorType:
-    """
-    asyncnext is a helper function that returns the next item from an async iterator.
-    It is a backport of the built-in anext function that was added in Python 3.10.
-    """
-    if sys.version_info >= (3, 10):
-        return await anext(async_generator)  # noqa: F821
-
-    return await async_generator.__anext__()  # pylint: disable=C2801
-
-
-class PostgresChannelLayer(BaseChannelLayer):  # type: ignore
+class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable=R0902
     """
     Postgres channel layer.
 
@@ -81,10 +59,13 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore
     ):
         super().__init__(expiry=expiry)
 
+        self.event_loop: typing.Optional[asyncio.AbstractEventLoop] = None
+        self.listener_task_is_running: typing.Optional[asyncio.Event] = None
+
         self.prefix = prefix
         self.group_expiry = group_expiry
         self.client_prefix = uuid.uuid4().hex[:5]
-        self.crypter: typing.Optional[MultiFernet] = None
+        self.crypter: typing.Optional['MultiFernet'] = None
         self._setup_encryption(symmetric_encryption_keys)
 
         try:
@@ -93,15 +74,15 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore
             kwargs['OPTIONS'] = {}
 
         db_wrapper = DatabaseWrapper(kwargs)
-        self.db_params = db_wrapper.get_connection_params()
 
         # Prevent psycopg from using the custom synchronous cursor factory from django
-        self.db_params.pop('cursor_factory')
-        self.db_params.pop('context')
+        db_params = db_wrapper.get_connection_params()
+        db_params.pop('cursor_factory')
+        db_params.pop('context')
+        self.db_params = db_params
 
         psycopg_options = kwargs.get('PYSCOPG_OPTIONS', {})
         self.django_db = DatabaseLayer(psycopg_options, self.db_params, logger=logger)
-        self.start_listener_task()
 
     def _setup_encryption(
         self, symmetric_encryption_keys: typing.Union[list[bytes], list[str]]
@@ -110,41 +91,75 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore
         if symmetric_encryption_keys:
             if isinstance(symmetric_encryption_keys, (str, bytes)):
                 raise ValueError('symmetric_encryption_keys must be a list of possible keys')
-            if not CRYPTOGRAPHY_INSTALLED:
+            if MultiFernet is None:
                 raise ValueError('Cannot run with encryption without `cryptography` installed.')
 
             sub_fernets = [self.make_fernet(key) for key in symmetric_encryption_keys]
             self.crypter = MultiFernet(sub_fernets)
 
-    def start_listener_task(self):
-        global listener_task_is_running
-        if listener_task_is_running.is_set():
-            logger.debug('The listener task is already running')
-            return
+    def _get_or_create_listener_task(self) -> tuple[asyncio.Event, bool]:
+        if not self.listener_task_is_running:
+            self.listener_task_is_running = asyncio.Event()
 
-        executor = ThreadPoolExecutor(1)
-        executor.submit(self.listen_to_all_channels)
+        if not self.event_loop:
+            self.event_loop = asyncio.get_running_loop()
 
-    def listen_to_all_channels(self):
+        # self.event_loop and running_event_loop can be different if a different thread is started
+        running_event_loop = asyncio.get_running_loop()
+        if self.listener_task_is_running.is_set() and self.event_loop == running_event_loop:
+            return self.listener_task_is_running, False
+
+        return self.listener_task_is_running, True
+
+    async def listen_to_all_channels(self) -> None:
+        """
+        Listens for messages in all channels from the database
+        and sends them to the respective queue(s)
+        """
+
+        # Retrieve all non-expired messages for all channels from the database
+        # and send them to the respective queues
+        # The results need to be ordered by id
+        # as the database returns them in an arbitrary order
+        returning = await self.django_db.retrieve_non_expired_queued_messages()
+        returning.sort(key=lambda x: int(x[0]))
+
+        for returning_message in returning:
+            message_id, channel, message, timestamp = returning_message
+            base64_message = base64.b64encode(message).decode('utf-8')
+            event_payload = f'{message_id}:{channel}:{base64_message}:{timestamp}'
+            queue = await self._get_or_create_queue(channel)
+            await queue.put(event_payload)
+
         retrieve_events_sql = 'LISTEN channels_postgres_message;'
 
         conn_info = psycopg.conninfo.make_conninfo(conninfo='', **self.db_params)
-        with psycopg.Connection.connect(conninfo=conn_info, autocommit=True) as connection:
-            connection.execute(retrieve_events_sql)
+        async with await psycopg.AsyncConnection.connect(
+            conninfo=conn_info, autocommit=True
+        ) as connection:
+            await connection.execute(retrieve_events_sql)
 
             # The db connection is open and now listening for events
-            listener_task_is_running.set()
+            assert self.listener_task_is_running is not None
+            self.listener_task_is_running.set()
 
-            for event in connection.notifies():
+            # This is a blocking call that will wait for events
+            # until the generator is closed
+            async for event in connection.notifies():
                 if event.payload == '1:shutdown':
-                    connection.notifies().close()
+                    logger.debug('Shutting down listener task')
+                    self.listener_task_is_running.clear()
+                    await connection.notifies().aclose()
                     break
 
                 split_payload = event.payload.split(':')
-                channel = split_payload[1]
-                future = ASYNCIO_EVENT_CHANNEL_MAPPING.get(channel, None)
-                if future:
-                    future.set_result(event.payload)
+                message_id, channel = (split_payload[0], split_payload[1])
+
+                # delete the message from the database
+                await self.django_db.delete_message_returning_message(int(message_id))
+
+                queue = await self._get_or_create_queue(channel)
+                await queue.put(event.payload)
 
     def make_fernet(self, key: typing.Union[bytes, str]) -> 'Fernet':
         """
@@ -165,11 +180,19 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore
 
     extensions = ['groups', 'flush']
 
-    async def send(self, channel: str, message: dict[str, typing.Any]) -> None:
-        while not listener_task_is_running.is_set():
-            await asyncio.sleep(0.1)
+    async def _get_or_create_queue(self, channel: str) -> asyncio.Queue[str]:
+        async with event_mapping_lock:
+            queue = ASYNCIO_EVENT_CHANNEL_MAPPING.get(channel, None)
+            if not queue:
+                queue = asyncio.Queue()
+                ASYNCIO_EVENT_CHANNEL_MAPPING[channel] = queue
 
+        return queue
+
+    async def send(self, channel: str, message: dict[str, typing.Any]) -> None:
         """Send a message onto a (general or specific) channel."""
+        await self._get_or_create_queue(channel)
+
         # Typecheck
         assert isinstance(message, dict), 'message is not a dict'
         try:
@@ -183,39 +206,33 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore
 
         await self.django_db.send_to_channel('', serialized_message, self.expiry, channel=channel)
 
-    async def _get_message_from_channel(self, channel: str) -> dict[str, typing.Any]:
-        message = await self.django_db.retrieve_non_expired_queued_message_from_channel(channel)
-        if not message:
-            # Create an asyncio future to wait for the message
-            event_loop = asyncio.get_event_loop()
-            future = event_loop.create_future()
-            ASYNCIO_EVENT_CHANNEL_MAPPING[channel] = future
-
+    async def _get_message_from_channel(
+        self, channel: str, queue: asyncio.Queue[str]
+    ) -> dict[str, typing.Any]:
+        logger.debug('Getting message from channel %s', channel)
+        message: typing.Optional[tuple[bytes]] = None
+        while True:
             # Receive the message and remove the future from the mapping
-            event_payload = await future
+            event_payload = await queue.get()
             split_payload = event_payload.split(':')
 
-            if len(split_payload) == 2:
+            if len(split_payload) == 4:
                 # The message is <= 7168 bytes, we don't need to fetch the message from the database
-                message_id, base64_message = split_payload
-
-                # There's is a problem with asyncio in python 3.9 where the base64.b64decode
-                # somehow breaks the event loop and causes psycopg to have a different event loop
-                # than the one that is running the receive coroutine.
-                if sys.version_info >= (3, 10):
-                    message = (base64.b64decode(base64_message),)
-                else:
-                    loop = asyncio.get_running_loop()
-                    message_bytes = await loop.run_in_executor(
-                        None, base64.b64decode, base64_message
-                    )
-                    message = (message_bytes,)
+                # The message doesn't need to be deleted from the database immediately. It will be
+                # cleaned up later by the delete_expired_messages function.
+                # also we never retrieve expired messages from the database
+                message_id, _, base64_message, timestamp = split_payload
+                message = (base64.b64decode(base64_message),)
+                if float(timestamp) < time.time():
+                    continue
+                message = (base64.b64decode(base64_message),)
             else:
                 message_id = split_payload[0]
-                ASYNCIO_EVENT_CHANNEL_MAPPING.pop(channel)
-                message = await self.django_db.delete_message_returning_message(message_id)
+                message = await self.django_db.delete_message_returning_message(int(message_id))
+                assert message is not None
 
-        assert message is not None
+            break
+
         deserialized_message = self.deserialize(message[0])
 
         return deserialized_message
@@ -226,8 +243,11 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore
         If more than one coroutine waits on the same channel, the first waiter
         will be given the message when it arrives.
         """
-        while not listener_task_is_running.is_set():
-            await asyncio.sleep(0.1)
+        queue = await self._get_or_create_queue(channel)
+        listener_task, is_new_task = self._get_or_create_listener_task()
+        if is_new_task:
+            asyncio.create_task(self.listen_to_all_channels())
+        await listener_task.wait()
 
         try:
             assert self.require_valid_channel_name(channel), 'Channel name not valid'
@@ -238,7 +258,7 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore
             assert real_channel.endswith(self.client_prefix + '!'), 'Wrong client prefix'
 
         # Get the message from the channel
-        return await self._get_message_from_channel(channel)
+        return await self._get_message_from_channel(channel, queue)
 
     async def new_channel(self, prefix: str = 'specific') -> str:
         """
@@ -295,6 +315,10 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore
 
     async def group_send(self, group: str, message: dict[str, typing.Any]) -> None:
         """Sends a message to the entire group."""
+        channels = await self.django_db.retrieve_group_channels(group)
+        for channel in channels:
+            await self._get_or_create_queue(channel)
+
         try:
             assert self.require_valid_group_name(group), 'Group name not valid'
         except AttributeError:
