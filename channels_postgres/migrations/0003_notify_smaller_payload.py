@@ -21,7 +21,7 @@ class Migration(migrations.Migration):
                 payload := NEW.id::text || ':' || NEW.channel::text;
             END IF;
 
-            PERFORM pg_notify('channels_postgres_message', payload);
+            PERFORM pg_notify('channels_postgres_messages', payload);
             RETURN NEW;
         END;
         $$ LANGUAGE plpgsql;

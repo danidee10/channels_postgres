@@ -132,7 +132,7 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
             queue = await self._get_or_create_queue(channel)
             await queue.put(event_payload)
 
-        retrieve_events_sql = 'LISTEN channels_postgres_message;'
+        retrieve_events_sql = 'LISTEN channels_postgres_messages;'
 
         conn_info = psycopg.conninfo.make_conninfo(conninfo='', **self.db_params)
         async with await psycopg.AsyncConnection.connect(
