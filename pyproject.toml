@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "channels_postgres"
-version = "1.0.7"
+version = "1.1.1"
 description = "PostgreSQL-backed ASGI channel layer implementation"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "BSD" }
+license = "MIT"
 authors = [
   { name = "Daniel Osaetin", email = "f805nqs6j@relay.firefox.com" }
 ]
