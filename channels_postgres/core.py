@@ -221,7 +221,6 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
             # 2. It will be cleaned up later by the `delete_expired_messages` coroutine.
             if len(split_payload) == 4:
                 message_id, _, base64_message, timestamp = split_payload
-                message = (base64.b64decode(base64_message),)
                 if float(timestamp) < time.time():
                     continue
                 message = (base64.b64decode(base64_message),)

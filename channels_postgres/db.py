@@ -55,9 +55,9 @@ class DatabaseLayer:
     """
     Encapsulates database operations
 
-    Basic database operations are either handled directly via Django's ORM.
-    Complex queries that are not supported by Django's ORM are handled
-    via raw SQL queries via psycopg.
+    A connection pool is used for efficient management of database operations
+    This is also the reason why psycopg is used directly instead of django's ORM
+    which doesn't support connection pooling
     """
 
     def __init__(
