@@ -65,7 +65,11 @@ CHANNEL_LAYERS = {
             'HOST': '127.0.0.1',
             'PORT': '5432',
             ...,
-            # django-channels config
+            # Optional configuration for psycopg_pool
+            'PSYCOPG_OPTIONS': {
+                'min_size': 10,
+                'max_size': 10,
+            },
         },
     },
 }
@@ -119,6 +123,15 @@ CHANNEL_LAYERS = {
 }
 ```
 
+### Pyscopg pool
+
+The `channels_postgres` makes use of a connection pool (via `psycopg_pool`) to efficiently manage concurrent connections to the database. You can pass additional options to the underlying `psycopg_pool` connection pool by setting the `PSYCOPG_OPTIONS` setting.
+
+See the [psycopg_pool documentation](https://www.psycopg.org/psycopg3/docs/api/pool.html#null-connection-pools) for more information.
+
+This might come in handy if you have lots of consumers in your channels application with increased latency between sending a message and the consumer(s) processing it.
+Increasing the `min_size` of the connection pool might help.
+
 ## Deviations from the channels spec
 
 ### group_expiry
@@ -129,10 +142,11 @@ Setting it to a non zero value enables the expected behaviour.
 
 ### channel_capacity
 
-RDMS' like `PostgreSQL` were specifically built to handle huge amounts of data without crashing down and using too much memory. Hence, there's no channel capacity.
+RDBMS' like `PostgreSQL` were specifically built to handle considerable amounts of data. Hence, there's no channel capacity. Although, it should be noted that the `channels_postgres` channel layer uses an internal `asyncio.Queue` to store messages and deliver them to consumers as quickly as possible.
+It is quite possible to see increased memory usage on the server if you send a lot of messages without consumers to process them.
 
 Your database should be able to handle thousands of messages with ease. If you're still worried about the database table growing out of hand, you can reduce the `expiry` time of the individual messages so they will be purged if a consumer cannot process them on time.
 
 ## Dependencies
 
-Python >= 3.6 is required for `channels_postgres`
+Python >= 3.9 is required for `channels_postgres`

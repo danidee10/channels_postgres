@@ -4,7 +4,6 @@ import asyncio
 import logging
 import random
 import typing
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import psycopg
@@ -30,15 +29,6 @@ is_creating_connection_pool = asyncio.Lock()
 connection_pool: typing.Optional[psycopg_pool.AsyncConnectionPool] = None
 
 
-@dataclass
-class PsycopgOptions:
-    """holds configuration options for psycopg"""
-
-    connection_class: typing.Type[psycopg_pool.AsyncConnectionPool] = (
-        psycopg_pool.AsyncConnectionPool
-    )
-
-
 class DatabaseLayer:
     """
     Encapsulates database operations
@@ -58,7 +48,7 @@ class DatabaseLayer:
         self.logger = logger
         self.using = using
         self.db_params = db_params
-        self.psycopg_options = PsycopgOptions(**psycopg_options)
+        self.psycopg_options = psycopg_options
 
     async def get_db_pool(
         self, db_params: dict[str, typing.Any]
@@ -84,12 +74,12 @@ class DatabaseLayer:
                 return connection_pool
 
             conn_info = psycopg.conninfo.make_conninfo(conninfo='', **db_params)
-            pool_connection_class = self.psycopg_options.connection_class
-            connection_pool = pool_connection_class(
+
+            connection_pool = psycopg_pool.AsyncConnectionPool(
                 conninfo=conn_info,
                 open=False,
                 configure=_configure_connection,
-                min_size=2,
+                **self.psycopg_options,
             )
             await connection_pool.open(wait=True)
 

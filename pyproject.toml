@@ -55,8 +55,8 @@ ignore-paths = ["channels_postgres/migrations/*"]
 [tool.pytest.ini_options]
 addopts = "-p no:django tests/ --cov=channels_postgres  --cov-branch --cov-report xml --cov-report html"
 asyncio_mode = "auto"
-# log_cli = true
-# log_level = "NOTSET"
+log_cli = true
+log_level = "NOTSET"
 
 [tool.ruff]
 line-length = 100

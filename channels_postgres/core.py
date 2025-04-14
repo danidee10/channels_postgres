@@ -39,14 +39,15 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
     """
     Postgres channel layer.
 
-    It uses the NOTIFY/LISTEN functionality to broadcast messages
-    It uses a mixture of `standard` synchronous database calls and
-    asynchronous database calls with aiopg (For receiving messages)
+    It uses the NOTIFY/LISTEN functionality of postgres to broadcast messages
 
     It also makes use of an internal message table to overcome the
     8000bytes limit of Postgres' NOTIFY messages.
     Which is a far cry from the channels standard of 1MB
     This table has a trigger that sends out the `NOTIFY` signal.
+
+    Using a database also means messages are durable and will always be
+    available to consumers (as long as they're not expired).
     """
 
     def __init__(  # pylint: disable=R0913,R0917
@@ -153,10 +154,7 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
                     break
 
                 split_payload = event.payload.split(':')
-                message_id, channel = (split_payload[0], split_payload[1])
-
-                # delete the message from the database
-                await self.django_db.delete_message_returning_message(int(message_id))
+                channel = split_payload[1]
 
                 queue = await self._get_or_create_queue(channel)
                 await queue.put(event.payload)
@@ -216,11 +214,12 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
             event_payload = await queue.get()
             split_payload = event_payload.split(':')
 
+            # Smaller messages (7168 bytes or less) are available in the queue directly and
+            # don't need to be fetched from the database.
+            # Also, the message doesn't need to be deleted from the database immediately because:
+            # 1. We never retrieve expired messages from the database.
+            # 2. It will be cleaned up later by the `delete_expired_messages` coroutine.
             if len(split_payload) == 4:
-                # The message is <= 7168 bytes, we don't need to fetch the message from the database
-                # The message doesn't need to be deleted from the database immediately. It will be
-                # cleaned up later by the delete_expired_messages function.
-                # also we never retrieve expired messages from the database
                 message_id, _, base64_message, timestamp = split_payload
                 message = (base64.b64decode(base64_message),)
                 if float(timestamp) < time.time():

@@ -1,4 +1,4 @@
-from django.db import migrations, models
+from django.db import migrations
 
 
 class Migration(migrations.Migration):
@@ -42,10 +42,5 @@ class Migration(migrations.Migration):
     """  # noqa
 
     operations = [
-        migrations.AddField(
-            model_name='message',
-            name='notify',
-            field=models.BooleanField(default=True),
-        ),
         migrations.RunSQL(sql=setup_database_sql, reverse_sql=reverse_setup_database_sql),
     ]

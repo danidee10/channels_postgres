@@ -11,7 +11,8 @@ DATABASES = {
         'HOST': '127.0.0.1',
         'PORT': '5432',
         # 'PYSCOPG_OPTIONS': {
-        #     'connection_class': psycopg_pool.AsyncNullConnectionPool,
+        #     'min_size': 10,
+        #     'max_size': 20,
         # },
     }
 }
