@@ -5,12 +5,11 @@ import logging
 import random
 import typing
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import psycopg
 import psycopg_pool
 import psycopg_pool.base
-from django.utils import timezone
 
 from .models import GroupChannel, Message
 
@@ -100,12 +99,16 @@ class DatabaseLayer:
 
     async def retrieve_group_channels(self, group_key: str) -> list[str]:
         """Retrieves all channels for a group"""
-        query = GroupChannel.objects.filter(group_key=group_key).distinct('group_key', 'channel')
-        channels = []
-        async for channel in query:
-            channels.append(channel.channel)
-
-        return channels
+        retrieve_channels_sql = (
+            'SELECT DISTINCT group_key,channel '
+            'FROM channels_postgres_groupchannel WHERE group_key=%s;'
+        )
+        db_pool = await self.get_db_pool(db_params=self.db_params)
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(retrieve_channels_sql, (group_key,))
+                result = await cursor.fetchall()
+                return [row[1] for row in result]
 
     async def send_to_channel(
         self,
@@ -115,6 +118,10 @@ class DatabaseLayer:
         channel: typing.Optional[str] = None,
     ) -> None:
         """Send a message to a channel/channels (if no channel is specified)."""
+        message_add_sql = (
+            'INSERT INTO channels_postgres_message (channel, message, expire) VALUES (%s, %s, %s)'
+        )
+
         if channel is None:
             channels = await self.retrieve_group_channels(group_key)
             if not channels:
@@ -123,40 +130,58 @@ class DatabaseLayer:
         else:
             channels = [channel]
 
-        expiry_datetime = timezone.now() + timedelta(seconds=expire)
+        expiry_datetime = datetime.now(UTC) + timedelta(seconds=expire)
         # Bulk insert messages
-        messages = [
-            Message(channel=channel, message=message, expire=expiry_datetime)
-            for channel in channels
-        ]
-
-        await Message.objects.abulk_create(messages)
+        db_pool = await self.get_db_pool(db_params=self.db_params)
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cursor:
+                data = [(channel, message, expiry_datetime) for channel in channels]
+                await cursor.executemany(message_add_sql, data)
 
     async def add_channel_to_group(self, group_key: str, channel: str, expire: int) -> None:
         """Adds a channel to a group"""
-        db_expiry = timezone.now() + timedelta(seconds=expire)
-        await GroupChannel.objects.acreate(group_key=group_key, channel=channel, expire=db_expiry)
+        expiry_datetime = datetime.now(UTC) + timedelta(seconds=expire)
+        group_add_sql = (
+            'INSERT INTO channels_postgres_groupchannel (group_key, channel, expire) '
+            'VALUES (%s, %s, %s)'
+        )
+
+        db_pool = await self.get_db_pool(db_params=self.db_params)
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cursor:
+                data = (group_key, channel, expiry_datetime)
+                await cursor.execute(group_add_sql, data)
 
         self.logger.debug('Channel %s added to Group %s', channel, group_key)
 
     async def delete_expired_groups(self) -> None:
         """Deletes expired groups after a random delay"""
+        now = datetime.now(UTC)
+        delete_expired_groups_sql = 'DELETE FROM channels_postgres_groupchannel WHERE expire < %s'
         expire = 60 * random.randint(10, 20)
         self.logger.debug('Deleting expired groups in %s seconds...', expire)
 
         await asyncio.sleep(expire)
 
-        await GroupChannel.objects.filter(expire__lt=timezone.now()).adelete()
+        db_pool = await self.get_db_pool(db_params=self.db_params)
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(delete_expired_groups_sql, (now,))
 
     async def delete_expired_messages(self, expire: typing.Optional[int] = None) -> None:
         """Deletes expired messages after a set time or random delay"""
+        now = datetime.now(UTC)
+        delete_expired_messages_sql = 'DELETE FROM channels_postgres_message WHERE expire < %s'
         if expire is None:
             expire = 60 * random.randint(10, 20)
         self.logger.debug('Deleting expired messages in %s seconds...', expire)
 
         await asyncio.sleep(expire)
 
-        await Message.objects.filter(expire__lt=timezone.now()).adelete()
+        db_pool = await self.get_db_pool(db_params=self.db_params)
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(delete_expired_messages_sql, (now,))
 
     async def retrieve_non_expired_queued_messages(self) -> list[tuple[str, str, bytes, str]]:
         """
@@ -166,12 +191,13 @@ class DatabaseLayer:
         queries. Even if the inner query is ordered, the returning
         clause is not guaranteed to be ordered
         """
+        now = datetime.now(UTC)
         retrieve_queued_messages_sql = """
             DELETE FROM channels_postgres_message
             WHERE id IN (
                 SELECT id
                 FROM channels_postgres_message
-                WHERE expire > NOW()
+                WHERE expire > %s
                 FOR UPDATE SKIP LOCKED
             )
             RETURNING id::text, channel, message, extract(epoch from expire)::text
@@ -179,7 +205,7 @@ class DatabaseLayer:
         db_pool = await self.get_db_pool(db_params=self.db_params)
         async with db_pool.connection() as conn:
             async with conn.cursor() as cursor:
-                await cursor.execute(retrieve_queued_messages_sql)
+                await cursor.execute(retrieve_queued_messages_sql, (now,))
 
                 return await cursor.fetchall()
 
@@ -187,12 +213,13 @@ class DatabaseLayer:
         self, channel: str
     ) -> typing.Optional[tuple[bytes]]:
         """Retrieves a non-expired message from a channel"""
+        now = datetime.now(UTC)
         retrieve_queued_messages_sql = """
             DELETE FROM channels_postgres_message
             WHERE id = (
                 SELECT id
                 FROM channels_postgres_message
-                WHERE channel=%s AND expire > NOW()
+                WHERE channel=%s AND expire > %s
                 ORDER BY id
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
@@ -202,7 +229,7 @@ class DatabaseLayer:
         db_pool = await self.get_db_pool(db_params=self.db_params)
         async with db_pool.connection() as conn:
             async with conn.cursor() as cursor:
-                await cursor.execute(retrieve_queued_messages_sql, (channel,))
+                await cursor.execute(retrieve_queued_messages_sql, (channel, now))
                 message = await cursor.fetchone()
 
                 return typing.cast(typing.Optional[tuple[bytes]], message)
