@@ -1,11 +1,19 @@
+"""channels_postgres django test settings"""
+
+USE_TZ = False
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql_psycopg2',
+        'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'postgres',
         'USER': 'postgres',
         'PASSWORD': 'password',
         'HOST': '127.0.0.1',
-        'PORT': '5432'
+        'PORT': '5432',
+        # 'PYSCOPG_OPTIONS': {
+        #     'min_size': 10,
+        #     'max_size': 20,
+        # },
     }
 }
 
@@ -19,7 +27,7 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.sites',
-    'channels_postgres'
+    'channels_postgres',
 ]
 
 SECRET_KEY = 'secret'
@@ -27,9 +35,7 @@ SECRET_KEY = 'secret'
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-
     'corsheaders.middleware.CorsMiddleware',
-
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',

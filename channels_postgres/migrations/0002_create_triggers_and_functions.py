@@ -2,10 +2,7 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
-    dependencies = [
-        ('channels_postgres', '0001_initial')
-    ]
+    dependencies = [('channels_postgres', '0001_initial')]
 
     setup_database_sql = """
         CREATE OR REPLACE FUNCTION channels_postgres_notify()
@@ -32,8 +29,4 @@ class Migration(migrations.Migration):
         DROP TRIGGER IF EXISTS channels_postgres_notify_trigger ON channels_postgres_message;
     """  # noqa
 
-    operations = [
-        migrations.RunSQL(
-            sql=setup_database_sql, reverse_sql=reverse_setup_database_sql
-        )
-    ]
+    operations = [migrations.RunSQL(sql=setup_database_sql, reverse_sql=reverse_setup_database_sql)]

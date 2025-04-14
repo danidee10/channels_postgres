@@ -1,1 +1,3 @@
-__version__ = '1.0.6'
+"""
+Channels Postgres
+"""

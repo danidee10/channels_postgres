@@ -1,5 +1,7 @@
 # channels_postgres
 
+[![codecov](https://codecov.io/gh/danidee10/channels_postgres/graph/badge.svg?token=47JCO35QEB)](https://codecov.io/gh/danidee10/channels_postgres)
+
 [![Tests](https://github.com/danidee10/channels_postgres/actions/workflows/tests.yml/badge.svg)](https://github.com/danidee10/channels_postgres/actions/workflows/tests.yml) [![channels_postgres pypi](https://img.shields.io/pypi/v/channels_postgres.svg)](https://pypi.python.org/pypi/channels_postgres)
 
 
@@ -37,7 +39,7 @@ DATABASES = {
 		...
 	},
 	'channels_postgres': {
-		'ENGINE': 'django.db.backends.postgresql_psycopg2',
+		'ENGINE': 'django.db.backends.postgresql',
 		'NAME': 'postgres',
 		'USER': 'postgres',
 		'PASSWORD': 'password',
@@ -56,16 +58,18 @@ CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_postgres.core.PostgresChannelLayer',
         'CONFIG': {
-            'ENGINE': 'django.db.backends.postgresql_psycopg2',
+            'ENGINE': 'django.db.backends.postgresql',
             'NAME': 'postgres',
             'USER': 'postgres',
             'PASSWORD': 'password',
             'HOST': '127.0.0.1',
             'PORT': '5432',
-
-            'config: {
-                ...
-            }
+            ...,
+            # Optional configuration for psycopg_pool
+            'PSYCOPG_OPTIONS': {
+                'min_size': 10,
+                'max_size': 10,
+            },
         },
     },
 }
@@ -73,11 +77,7 @@ CHANNEL_LAYERS = {
 
 The Config object is exactly the same as the standard config object for Django's PostgreSQL database. See the django documentation for more information.
 
-`config` is a dictionary of parameters to the underlying async postgres library (in this case `aiopg`) This setting can be used to control the database pool size, connection timeout etc. See the [aiopg documentation](https://aiopg.readthedocs.io/en/stable/core.html?highlight=pool#pool) for more information.
-
-A typical use of `config` would be to increase the `maxsize` of the connection pool. The default of 10 might be too low for sites with a decent amount of traffic.
-
-The config parameters are described below:
+The django-channels config parameters are described below:
 
 ### prefix
 
@@ -123,6 +123,15 @@ CHANNEL_LAYERS = {
 }
 ```
 
+### Pyscopg pool
+
+The `channels_postgres` makes use of a connection pool (via `psycopg_pool`) to efficiently manage concurrent connections to the database. You can pass additional options to the underlying `psycopg_pool` connection pool by setting the `PSYCOPG_OPTIONS` setting.
+
+See the [psycopg_pool documentation](https://www.psycopg.org/psycopg3/docs/api/pool.html#null-connection-pools) for more information.
+
+This might come in handy if you have lots of consumers in your channels application with increased latency between sending a message and the consumer(s) processing it.
+Increasing the `min_size` of the connection pool might help.
+
 ## Deviations from the channels spec
 
 ### group_expiry
@@ -133,10 +142,11 @@ Setting it to a non zero value enables the expected behaviour.
 
 ### channel_capacity
 
-RDMS' like `PostgreSQL` were specifically built to handle huge amounts of data without crashing down and using too much memory. Hence, there's no channel capacity.
+RDBMS' like `PostgreSQL` were specifically built to handle considerable amounts of data. Hence, there's no channel capacity. Although, it should be noted that the `channels_postgres` channel layer uses an internal `asyncio.Queue` to store messages and deliver them to consumers as quickly as possible.
+It is quite possible to see increased memory usage on the server if you send a lot of messages without consumers to process them.
 
 Your database should be able to handle thousands of messages with ease. If you're still worried about the database table growing out of hand, you can reduce the `expiry` time of the individual messages so they will be purged if a consumer cannot process them on time.
 
 ## Dependencies
 
-Python >= 3.6 is required for `channels_postgres`
+Python >= 3.9 is required for `channels_postgres`
