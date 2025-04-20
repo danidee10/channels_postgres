@@ -8,4 +8,4 @@ on:
 jobs:
   upload-coverage:
     name: Run tests and upload coverage reports
-    uses: ./.github/workflows/shared/tests.yml
+    uses: ./.github/workflows/shared-tests.yml
