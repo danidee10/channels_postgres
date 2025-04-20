@@ -1,7 +1,4 @@
-# This workflow will upload a Python Package using Twine when a release is created
-# For more information see: https://help.github.com/en/actions/language-and-framework-guides/using-python-with-github-actions#publishing-to-package-registries
-
-name: Upload Python Package
+name: Download artifacts and upload to codecov
 
 on:
   workflow_run:
@@ -17,9 +14,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Download artifacts
         uses: actions/download-artifact@v4
-        with:
-          name: coverage_{matrix.os}.{matrix.python-version}.xml
-          path: coverage.xml
       - name: Upload coverage to codecov
         uses: codecov/codecov-action@v5
         with:
