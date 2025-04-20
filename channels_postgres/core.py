@@ -31,7 +31,6 @@ from asyncio import create_task  # pylint: disable=C0411,C0413
 logger = logging.getLogger(__name__)
 
 
-event_mapping_lock = asyncio.Lock()
 ASYNCIO_EVENT_CHANNEL_MAPPING: dict[str, asyncio.Queue[str]] = {}
 
 
@@ -130,8 +129,7 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
             message_id, channel, message, timestamp = returning_message
             base64_message = base64.b64encode(message).decode('utf-8')
             event_payload = f'{message_id}:{channel}:{base64_message}:{timestamp}'
-            queue = await self._get_or_create_queue(channel)
-            await queue.put(event_payload)
+            self._get_or_create_queue(channel).put_nowait(event_payload)
 
         conn_info = psycopg.conninfo.make_conninfo(conninfo='', **self.db_params)
         async with await psycopg.AsyncConnection.connect(
@@ -165,8 +163,7 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
                     )
                     continue
 
-                queue = await self._get_or_create_queue(channel)
-                await queue.put(event.payload)
+                self._get_or_create_queue(channel).put_nowait(event.payload)
 
     def make_fernet(self, key: typing.Union[bytes, str]) -> 'Fernet':
         """
@@ -187,18 +184,17 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
 
     extensions = ['groups', 'flush']
 
-    async def _get_or_create_queue(self, channel: str) -> asyncio.Queue[str]:
-        async with event_mapping_lock:
-            queue = ASYNCIO_EVENT_CHANNEL_MAPPING.get(channel, None)
-            if not queue:
-                queue = asyncio.Queue()
-                ASYNCIO_EVENT_CHANNEL_MAPPING[channel] = queue
+    def _get_or_create_queue(self, channel: str) -> asyncio.Queue[str]:
+        queue = ASYNCIO_EVENT_CHANNEL_MAPPING.get(channel, None)
+        if not queue:
+            queue = asyncio.Queue()
+            ASYNCIO_EVENT_CHANNEL_MAPPING[channel] = queue
 
         return queue
 
     async def send(self, channel: str, message: dict[str, typing.Any]) -> None:
         """Send a message onto a (general or specific) channel."""
-        await self._get_or_create_queue(channel)
+        self._get_or_create_queue(channel)
 
         # Typecheck
         assert isinstance(message, dict), 'message is not a dict'
@@ -272,7 +268,7 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
         subsequent calls to this method will repeatedly try to acquire the lock
         before proceeding to wait for a message.
         """
-        queue = await self._get_or_create_queue(channel)
+        queue = self._get_or_create_queue(channel)
         await self._get_or_create_channel_advisory_lock(channel)
         listener_task, is_new_task = self._get_or_create_listener_task()
         if is_new_task:
@@ -347,7 +343,7 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
         """Sends a message to the entire group."""
         channels = await self.django_db.retrieve_group_channels(group)
         for channel in channels:
-            await self._get_or_create_queue(channel)
+            self._get_or_create_queue(channel)
 
         try:
             assert self.require_valid_group_name(group), 'Group name not valid'

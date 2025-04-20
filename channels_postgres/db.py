@@ -86,6 +86,8 @@ class DatabaseLayer:
 
         async def _configure_connection(conn: psycopg.AsyncConnection) -> None:
             await conn.set_autocommit(True)
+            conn.prepare_threshold = 0  # All statements should be prepared
+            conn.prepared_max = None  # No limit on the number of prepared statements
 
         async with is_creating_connection_pool:
             if connection_pool is not None:
@@ -144,12 +146,17 @@ class DatabaseLayer:
             channels = [channel]
 
         expiry_datetime = utc_now() + timedelta(seconds=expire)
-        # Bulk insert messages
         db_pool = await self.get_db_pool(db_params=self.db_params)
         async with db_pool.connection() as conn:
             async with conn.cursor() as cursor:
-                data = [(channel, message, expiry_datetime) for channel in channels]
-                await cursor.executemany(message_add_sql, data)
+                if len(channels) == 1:
+                    # single insert
+                    data = (channels[0], message, expiry_datetime)
+                    await cursor.execute(message_add_sql, data)
+                else:
+                    # Bulk insert messages
+                    data = [(channel, message, expiry_datetime) for channel in channels]
+                    await cursor.executemany(message_add_sql, data)
 
     async def add_channel_to_group(self, group_key: str, channel: str, expire: int) -> None:
         """Adds a channel to a group"""
