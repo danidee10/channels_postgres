@@ -31,7 +31,6 @@ from asyncio import create_task  # pylint: disable=C0411,C0413
 logger = logging.getLogger(__name__)
 
 
-event_mapping_lock = asyncio.Lock()
 ASYNCIO_EVENT_CHANNEL_MAPPING: dict[str, asyncio.Queue[str]] = {}
 
 
@@ -68,6 +67,7 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
         self.client_prefix = uuid.uuid4().hex[:5]
         self.crypter: typing.Optional['MultiFernet'] = None
         self._setup_encryption(symmetric_encryption_keys)
+        self._channel_advisory_locks: dict[str, bool] = {}
 
         try:
             kwargs['OPTIONS']
@@ -129,16 +129,13 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
             message_id, channel, message, timestamp = returning_message
             base64_message = base64.b64encode(message).decode('utf-8')
             event_payload = f'{message_id}:{channel}:{base64_message}:{timestamp}'
-            queue = await self._get_or_create_queue(channel)
-            await queue.put(event_payload)
-
-        retrieve_events_sql = 'LISTEN channels_postgres_messages;'
+            self._get_or_create_queue(channel).put_nowait(event_payload)
 
         conn_info = psycopg.conninfo.make_conninfo(conninfo='', **self.db_params)
         async with await psycopg.AsyncConnection.connect(
             conninfo=conn_info, autocommit=True
         ) as connection:
-            await connection.execute(retrieve_events_sql)
+            await connection.execute('LISTEN channels_postgres_messages;')
 
             # The db connection is open and now listening for events
             assert self.listener_task_is_running is not None
@@ -156,8 +153,17 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
                 split_payload = event.payload.split(':')
                 channel = split_payload[1]
 
-                queue = await self._get_or_create_queue(channel)
-                await queue.put(event.payload)
+                # If we don't have the advisory lock, discard the event
+                # as another consumer is already processing it
+                lock = self._channel_advisory_locks.get(channel, False)
+                if lock is False:
+                    logger.debug(
+                        "Discarding event for channel %s because we don't have the advisory lock",
+                        channel,
+                    )
+                    continue
+
+                self._get_or_create_queue(channel).put_nowait(event.payload)
 
     def make_fernet(self, key: typing.Union[bytes, str]) -> 'Fernet':
         """
@@ -178,18 +184,17 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
 
     extensions = ['groups', 'flush']
 
-    async def _get_or_create_queue(self, channel: str) -> asyncio.Queue[str]:
-        async with event_mapping_lock:
-            queue = ASYNCIO_EVENT_CHANNEL_MAPPING.get(channel, None)
-            if not queue:
-                queue = asyncio.Queue()
-                ASYNCIO_EVENT_CHANNEL_MAPPING[channel] = queue
+    def _get_or_create_queue(self, channel: str) -> asyncio.Queue[str]:
+        queue = ASYNCIO_EVENT_CHANNEL_MAPPING.get(channel, None)
+        if not queue:
+            queue = asyncio.Queue()
+            ASYNCIO_EVENT_CHANNEL_MAPPING[channel] = queue
 
         return queue
 
     async def send(self, channel: str, message: dict[str, typing.Any]) -> None:
         """Send a message onto a (general or specific) channel."""
-        await self._get_or_create_queue(channel)
+        self._get_or_create_queue(channel)
 
         # Typecheck
         assert isinstance(message, dict), 'message is not a dict'
@@ -212,6 +217,7 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
         while True:
             # Receive the message and remove the future from the mapping
             event_payload = await queue.get()
+
             split_payload = event_payload.split(':')
 
             # Smaller messages (7168 bytes or less) are available in the queue directly and
@@ -235,13 +241,35 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
 
         return deserialized_message
 
+    async def _get_or_create_channel_advisory_lock(self, channel: str) -> bool:
+        # Try to acquire the advisory lock from the database
+        lock = self._channel_advisory_locks.get(channel, False)
+        if lock is False:
+            lock = await self.django_db.acquire_advisory_lock(channel)
+            self._channel_advisory_locks[channel] = lock
+
+        return lock
+
     async def receive(self, channel: str) -> dict[str, typing.Any]:
         """
         Receive the first message that arrives on the channel.
         If more than one coroutine waits on the same channel, the first waiter
         will be given the message when it arrives.
+
+        This is done by acquiring an `advistory_lock` from the database
+        based on the channel name.
+
+        If the lock is acquired succesfully, subsequent calls to this method
+        will not try to acquire the lock again.
+        _The lock is session based and should be released by postgres when
+        the session is closed_
+
+        If the lock is already acquired by another coroutine,
+        subsequent calls to this method will repeatedly try to acquire the lock
+        before proceeding to wait for a message.
         """
-        queue = await self._get_or_create_queue(channel)
+        queue = self._get_or_create_queue(channel)
+        await self._get_or_create_channel_advisory_lock(channel)
         listener_task, is_new_task = self._get_or_create_listener_task()
         if is_new_task:
             asyncio.create_task(self.listen_to_all_channels())
@@ -315,7 +343,7 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
         """Sends a message to the entire group."""
         channels = await self.django_db.retrieve_group_channels(group)
         for channel in channels:
-            await self._get_or_create_queue(channel)
+            self._get_or_create_queue(channel)
 
         try:
             assert self.require_valid_group_name(group), 'Group name not valid'

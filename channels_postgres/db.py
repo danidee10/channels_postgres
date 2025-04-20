@@ -1,6 +1,7 @@
 """common db methods."""
 
 import asyncio
+import hashlib
 import logging
 import random
 import typing
@@ -85,6 +86,8 @@ class DatabaseLayer:
 
         async def _configure_connection(conn: psycopg.AsyncConnection) -> None:
             await conn.set_autocommit(True)
+            conn.prepare_threshold = 0  # All statements should be prepared
+            conn.prepared_max = None  # No limit on the number of prepared statements
 
         async with is_creating_connection_pool:
             if connection_pool is not None:
@@ -143,12 +146,17 @@ class DatabaseLayer:
             channels = [channel]
 
         expiry_datetime = utc_now() + timedelta(seconds=expire)
-        # Bulk insert messages
         db_pool = await self.get_db_pool(db_params=self.db_params)
         async with db_pool.connection() as conn:
             async with conn.cursor() as cursor:
-                data = [(channel, message, expiry_datetime) for channel in channels]
-                await cursor.executemany(message_add_sql, data)
+                if len(channels) == 1:
+                    # single insert
+                    data = (channels[0], message, expiry_datetime)
+                    await cursor.execute(message_add_sql, data)
+                else:
+                    # Bulk insert messages
+                    multi_data = [(channel, message, expiry_datetime) for channel in channels]
+                    await cursor.executemany(message_add_sql, multi_data)
 
     async def add_channel_to_group(self, group_key: str, channel: str, expire: int) -> None:
         """Adds a channel to a group"""
@@ -254,6 +262,37 @@ class DatabaseLayer:
                 message = await cursor.fetchone()
 
                 return typing.cast(typing.Optional[tuple[bytes]], message)
+
+    def _channel_to_constant_bigint(self, channel: str) -> int:
+        """
+        Converts a channel name to a constant bigint.
+        """
+        # Hash the character (SHA-256 gives consistent output)
+        hash_bytes = hashlib.sha256(channel.encode('utf-8')).digest()
+        # Convert to a large int
+        hash_int = int.from_bytes(hash_bytes, byteorder='big')
+
+        # Fit into signed 64-bit bigint range
+        signed_bigint = hash_int % (2**64)
+        if signed_bigint >= 2**63:
+            signed_bigint -= 2**64  # Convert to negative if above max signed
+
+        return signed_bigint
+
+    async def acquire_advisory_lock(self, channel: str) -> bool:
+        """Acquires an advisory lock from the database"""
+        advisory_lock_id = self._channel_to_constant_bigint(channel)
+        acquire_advisory_lock_sql = sql.SQL('SELECT pg_try_advisory_lock(%s::bigint)').format(
+            advisory_lock_id=advisory_lock_id
+        )
+
+        db_pool = await self.get_db_pool(db_params=self.db_params)
+        async with db_pool.connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(acquire_advisory_lock_sql, (advisory_lock_id,))
+
+                result = await cursor.fetchone()
+                return result[0] if result else False
 
     async def delete_message_returning_message(
         self, message_id: int
