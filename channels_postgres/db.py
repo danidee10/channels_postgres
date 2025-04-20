@@ -155,8 +155,8 @@ class DatabaseLayer:
                     await cursor.execute(message_add_sql, data)
                 else:
                     # Bulk insert messages
-                    data = [(channel, message, expiry_datetime) for channel in channels]
-                    await cursor.executemany(message_add_sql, data)
+                    multi_data = [(channel, message, expiry_datetime) for channel in channels]
+                    await cursor.executemany(message_add_sql, multi_data)
 
     async def add_channel_to_group(self, group_key: str, channel: str, expire: int) -> None:
         """Adds a channel to a group"""
