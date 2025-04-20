@@ -36,8 +36,14 @@ jobs:
         run: |
           ENV_PREFIX=$(tr -C -d "0-9" <<< "${{ matrix.python-version }}")
           TOXENV=$(tox --listenvs | grep "^py$ENV_PREFIX" | tr '\n' ',') python -m tox
-      - name: Upload coverage reports to Codecov
-        if: github.actor != 'dependabot[bot]'
-        uses: codecov/codecov-action@v5
+      #- name: Upload coverage reports to Codecov
+      #  if: github.actor != 'dependabot[bot]'
+      #  uses: codecov/codecov-action@v5
+      #  with:
+      #    token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload artifact to github
+        uses: actions/upload-artifact@v4
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          name: coverage_{matrix.os}.{matrix.python-version}.xml
+          path: coverage.xml
+          retention-days: 3

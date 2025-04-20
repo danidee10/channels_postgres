@@ -12,7 +12,7 @@ on:
 jobs:
   pypi-publish:
     name: upload release to PyPI
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     # Specifying a GitHub environment is optional, but strongly encouraged
     environment: release
     permissions:
