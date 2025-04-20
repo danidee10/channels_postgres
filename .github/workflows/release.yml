@@ -12,6 +12,7 @@ jobs:
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
+        pattern: coverage_*
       # Codecov will search all directories for coverage reports and upload them
       - name: Upload coverage to codecov
         uses: codecov/codecov-action@v5
