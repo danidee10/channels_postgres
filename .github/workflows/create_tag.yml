@@ -1,0 +1,30 @@
+name: Tag and Release (Github)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  release:
+    name: Tag and create github release
+    needs: upload-coverage
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write # to be able to publish a GitHub release
+      issues: write # to be able to comment on released issues
+      pull-requests: write # to be able to comment on released pull requests
+      id-token: write # to enable use of OIDC for npm provenance
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 18
+        cache: 'yarn'
+    - run: yarn install
+    - run: git config --global user.name "${GITHUB_ACTOR}"
+    - run: git config --global user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
+    - name: Release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: npx release-it --ci
