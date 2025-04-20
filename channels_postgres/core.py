@@ -68,6 +68,7 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
         self.client_prefix = uuid.uuid4().hex[:5]
         self.crypter: typing.Optional['MultiFernet'] = None
         self._setup_encryption(symmetric_encryption_keys)
+        self._channel_advisory_locks: dict[str, bool] = {}
 
         try:
             kwargs['OPTIONS']
@@ -132,13 +133,11 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
             queue = await self._get_or_create_queue(channel)
             await queue.put(event_payload)
 
-        retrieve_events_sql = 'LISTEN channels_postgres_messages;'
-
         conn_info = psycopg.conninfo.make_conninfo(conninfo='', **self.db_params)
         async with await psycopg.AsyncConnection.connect(
             conninfo=conn_info, autocommit=True
         ) as connection:
-            await connection.execute(retrieve_events_sql)
+            await connection.execute('LISTEN channels_postgres_messages;')
 
             # The db connection is open and now listening for events
             assert self.listener_task_is_running is not None
@@ -155,6 +154,16 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
 
                 split_payload = event.payload.split(':')
                 channel = split_payload[1]
+
+                # If we don't have the advisory lock, discard the event
+                # as another consumer is already processing it
+                lock = self._channel_advisory_locks.get(channel, False)
+                if lock is False:
+                    logger.debug(
+                        "Discarding event for channel %s because we don't have the advisory lock",
+                        channel,
+                    )
+                    continue
 
                 queue = await self._get_or_create_queue(channel)
                 await queue.put(event.payload)
@@ -212,6 +221,7 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
         while True:
             # Receive the message and remove the future from the mapping
             event_payload = await queue.get()
+
             split_payload = event_payload.split(':')
 
             # Smaller messages (7168 bytes or less) are available in the queue directly and
@@ -235,13 +245,35 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
 
         return deserialized_message
 
+    async def _get_or_create_channel_advisory_lock(self, channel: str) -> bool:
+        # Try to acquire the advisory lock from the database
+        lock = self._channel_advisory_locks.get(channel, False)
+        if lock is False:
+            lock = await self.django_db.acquire_advisory_lock(channel)
+            self._channel_advisory_locks[channel] = lock
+
+        return lock
+
     async def receive(self, channel: str) -> dict[str, typing.Any]:
         """
         Receive the first message that arrives on the channel.
         If more than one coroutine waits on the same channel, the first waiter
         will be given the message when it arrives.
+
+        This is done by acquiring an `advistory_lock` from the database
+        based on the channel name.
+
+        If the lock is acquired succesfully, subsequent calls to this method
+        will not try to acquire the lock again.
+        _The lock is session based and should be released by postgres when
+        the session is closed_
+
+        If the lock is already acquired by another coroutine,
+        subsequent calls to this method will repeatedly try to acquire the lock
+        before proceeding to wait for a message.
         """
         queue = await self._get_or_create_queue(channel)
+        await self._get_or_create_channel_advisory_lock(channel)
         listener_task, is_new_task = self._get_or_create_listener_task()
         if is_new_task:
             asyncio.create_task(self.listen_to_all_channels())

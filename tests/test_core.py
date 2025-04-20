@@ -476,6 +476,55 @@ async def test_message_expiry__group_send__one_channel_expires_message() -> None
     assert message['text'] == 'Third!'
 
 
+@pytest.mark.asyncio
+async def test_guarantee_at_most_once_delivery() -> None:
+    """
+    Tests that at most once delivery is guaranteed.
+
+    If two consumers are listening on the same channel,
+    the message should be delivered to only one of them.
+    """
+    db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
+    assert db_params is not None
+
+    channel_name = 'same-channel'
+    loop = asyncio.get_running_loop()
+
+    channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
+    channel_layer_2 = PostgresChannelLayer(**default_layer_config, **db_params)
+    future_channel_layer = loop.create_future()
+    future_channel_layer_2 = loop.create_future()
+
+    async def receive_task(
+        channel_layer: PostgresChannelLayer, future: asyncio.Future[typing.Any]
+    ) -> None:
+        message = await channel_layer.receive(channel_name)
+        future.set_result(message)
+
+    # Ensure that receive_task_2 is scheduled first and accquires the advisory lock
+    create_task(receive_task(channel_layer_2, future_channel_layer_2))
+    while channel_layer_2.listener_task_is_running is None:
+        await asyncio.sleep(0.1)
+    await channel_layer_2.listener_task_is_running.wait()
+
+    create_task(receive_task(channel_layer, future_channel_layer))
+    while channel_layer.listener_task_is_running is None:
+        await asyncio.sleep(0.1)
+    await channel_layer.listener_task_is_running.wait()
+
+    await channel_layer.send(channel_name, {'type': 'test.message', 'text': 'Hello!'})
+
+    result = await future_channel_layer_2
+    assert result['type'] == 'test.message'
+    assert result['text'] == 'Hello!'
+
+    # Channel layer 1 should not receive the message
+    # as it is already consumed by channel layer 2
+    with pytest.raises(asyncio.TimeoutError):
+        async with async_timeout.timeout(1):
+            await future_channel_layer
+
+
 def test_default_group_key_format() -> None:
     """
     Tests the default group key format.
