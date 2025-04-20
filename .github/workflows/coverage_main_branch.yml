@@ -1,0 +1,11 @@
+name: Main branch coverage
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  upload-coverage:
+    name: Run tests and upload coverage reports
+    uses: ./.github/workflows/shared/tests.yml

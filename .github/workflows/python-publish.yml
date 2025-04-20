@@ -1,7 +1,10 @@
-name: Publish Python Package to PyPI
+name: Upload Python Package
 
 on:
-  workflow_dispatch:
+  workflow_run:
+    workflows: [Release]
+    types:
+      - completed
 
 jobs:
   pypi-publish:

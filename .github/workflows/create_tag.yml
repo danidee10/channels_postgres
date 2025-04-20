@@ -1,15 +1,9 @@
-name: Create Tag
+name: Tag and Release (Github)
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
-  upload-coverage:
-    name: Run tests and upload coverage reports
-    uses: ./.github/workflows/shared/tests.yml
-
   release:
     name: Tag and create github release
     needs: upload-coverage
