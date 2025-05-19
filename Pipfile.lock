@@ -114,15 +114,13 @@
             "version": "==1.1.0"
         },
         "psycopg": {
-            "extras": [
-                "pool"
-            ],
             "hashes": [
-                "sha256:16fa094efa2698f260f2af74f3710f781e4a6f226efe9d1fd0c37f384639ed8a",
-                "sha256:f3ff5488525890abb0566c429146add66b329e20d6d4835662b920cbbf90ac58"
+                "sha256:01a8dadccdaac2123c916208c96e06631641c0566b22005493f09663c7a8d3b6",
+                "sha256:2fbb46fcd17bc81f993f28c47f1ebea38d66ae97cc2dbc3cad73b37cefbff700"
             ],
+            "index": "pypi",
             "markers": "python_version >= '3.8'",
-            "version": "==3.2.6"
+            "version": "==3.2.9"
         },
         "psycopg-pool": {
             "hashes": [
