@@ -155,7 +155,6 @@
                 "sha256:3e1e3ecc849832fe52ccf2cb6686b7a55f82bb1d6aee72a58826471390335e47",
                 "sha256:c343bd80a0bec947a9860adb4c432ffa7db769836c64238fc34bdc3fec84d590"
             ],
-            "index": "pypi",
             "markers": "python_version >= '3.8'",
             "version": "==3.8.1"
         },
@@ -289,11 +288,12 @@
         },
         "django": {
             "hashes": [
-                "sha256:1a47f7a7a3d43ce64570d350e008d2949abe8c7e21737b351b6a1611277c6d89",
-                "sha256:91ceed4e3a6db5aedced65e3c8f963118ea9ba753fc620831c77074e620e7d83"
+                "sha256:85852e517f84435e9b13421379cd6c43ef5b48a9c8b391d29a26f7900967e952",
+                "sha256:997ef2162d04ead6869551b22cde4e06da1f94cf595f4af3f3d3afeae1f3f6fe"
             ],
+            "index": "pypi",
             "markers": "python_version >= '3.10'",
-            "version": "==5.2"
+            "version": "==5.2.2"
         },
         "django-stubs": {
             "extras": [
