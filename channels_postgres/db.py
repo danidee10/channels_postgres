@@ -311,7 +311,11 @@ class DatabaseLayer:
 
     async def delete_channel_group(self, group_key: str, channel: str) -> None:
         """Deletes a channel from a group"""
-        await GroupChannel.objects.filter(group_key=group_key, channel=channel).adelete()
+        await (
+            GroupChannel.objects.using(self.using)
+            .filter(group_key=group_key, channel=channel)
+            .adelete()
+        )
 
     async def flush(self) -> None:
         """
