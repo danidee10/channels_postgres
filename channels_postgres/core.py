@@ -82,7 +82,7 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
         db_params.pop('context')
         self.db_params = db_params
 
-        psycopg_options = kwargs.get('PYSCOPG_OPTIONS', {})
+        psycopg_options = kwargs.get('PSYCOPG_OPTIONS', {})
         self.django_db = DatabaseLayer(psycopg_options, self.db_params, logger=logger)
 
     def _setup_encryption(
