@@ -1,2 +1,6 @@
 .vscode/
 *.pyc
+.tox/
+.coverage/
+.DS_Store
+coverage.xml
