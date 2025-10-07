@@ -548,3 +548,25 @@ def test_custom_group_key_format() -> None:
     channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
     group_name = channel_layer._group_key('test_group')  # pylint: disable=W0212
     assert group_name == 'test_prefix:group:test_group'
+
+
+@pytest.mark.asyncio
+async def test_almost_too_big_message(channel_layer: PostgresChannelLayer) -> None:
+    """Makes sure we can send a big message and receive it."""
+    text = random.randbytes(7_000) # PostgreSQL has a limit of 8000 bytes
+    await channel_layer.send('test-channel-1', {'type': 'test.message', 'text': text})
+    message = await channel_layer.receive('test-channel-1')
+
+    assert message['type'] == 'test.message'
+    assert message['text'] == text
+
+
+@pytest.mark.asyncio
+async def test_big_message(channel_layer: PostgresChannelLayer) -> None:
+    """Makes sure we can send a big message and receive it."""
+    text = random.randbytes(10_000) # PostgreSQL has a limit of 8000 bytes
+    await channel_layer.send('test-channel-1', {'type': 'test.message', 'text': text})
+    message = await channel_layer.receive('test-channel-1')
+
+    assert message['type'] == 'test.message'
+    assert message['text'] == text

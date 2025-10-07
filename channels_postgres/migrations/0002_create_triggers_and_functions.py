@@ -25,8 +25,8 @@ class Migration(migrations.Migration):
     """
 
     reverse_setup_database_sql = """
-        DROP FUNCTION IF EXISTS channels_postgres_notify;
         DROP TRIGGER IF EXISTS channels_postgres_notify_trigger ON channels_postgres_message;
+        DROP FUNCTION IF EXISTS channels_postgres_notify;
     """  # noqa
 
     operations = [migrations.RunSQL(sql=setup_database_sql, reverse_sql=reverse_setup_database_sql)]
