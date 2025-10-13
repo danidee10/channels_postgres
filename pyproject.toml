@@ -24,11 +24,11 @@ Homepage = "http://github.com/danidee10/channels_postgres/"
 
 [project.optional-dependencies]
 cryptography = [
-  "cryptography>=44.0.2,<45"
+  "cryptography>=44.0.2,<47"
 ]
 tests = [
   "async-timeout",
-  "cryptography>=44.0.2,<45",
+  "cryptography>=44.0.2,<47",
   "django-stubs>=5.1.3,<6",
   "mypy>=1.15.0,<2",
   "pylint>=3.3.6,<4",
