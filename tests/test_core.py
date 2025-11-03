@@ -563,7 +563,7 @@ async def test_almost_too_big_message(channel_layer: PostgresChannelLayer) -> No
 
 @pytest.mark.asyncio
 async def test_big_message(channel_layer: PostgresChannelLayer) -> None:
-    """Makes sure we can send a big message and receive it."""
+    """Makes sure we can send a message bigger than `8000` bytes and receive it."""
     text = random.randbytes(10_000) # PostgreSQL has a limit of 8000 bytes
     await channel_layer.send('test-channel-1', {'type': 'test.message', 'text': text})
     message = await channel_layer.receive('test-channel-1')
