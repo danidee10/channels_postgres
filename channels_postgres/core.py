@@ -117,7 +117,6 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
         Listens for messages in all channels from the database
         and sends them to the respective queue(s)
         """
-
         # Retrieve all non-expired messages for all channels from the database
         # and send them to the respective queues
         # The results need to be ordered by id
