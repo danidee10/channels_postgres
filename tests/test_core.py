@@ -560,7 +560,7 @@ async def test_small_message(channel_layer: PostgresChannelLayer) -> None:
     without INSERTING and retrieving the message from the database.
     The message should be sent directly via `pg_notify`.
     """
-    text = random.randbytes(7_000)
+    text = random.randbytes(1_000)
     task = create_task(channel_layer.receive('test-channel-1'))
 
     async def chained_tasks() -> None:

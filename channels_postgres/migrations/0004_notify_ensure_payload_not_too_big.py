@@ -17,7 +17,7 @@ class Migration(migrations.Migration):
             epoch := extract(epoch from NEW.expire)::text;
 
             payload := NEW.id::text || ':' || NEW.channel::text || ':' || encoded_message || ':' || epoch;
-            IF octet_length(payload) <= 8000 THEN
+            IF octet_length(payload) > 8000 THEN
                 payload := NEW.id::text || ':' || NEW.channel::text;
             END IF;
 
