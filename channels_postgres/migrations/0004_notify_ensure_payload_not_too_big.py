@@ -2,21 +2,27 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-    dependencies = [('channels_postgres', '0002_create_triggers_and_functions')]
+    dependencies = [('channels_postgres', '0003_notify_smaller_payload')]
 
     # For messages than are smaller than 7168 bytes, we can send the whole message in the payload
     # Otherwise, we send only the message id
 
     # Postgres' NOTIFY messages are limited to 8000 bytes, so we can't always send the whole message
     # in the payload.
+    
+    # +3 is added to 8000 bytes comparison to account for the three colon separators in id:channel:encoded_message:epoch
     setup_database_sql = """
         CREATE OR REPLACE FUNCTION channels_postgres_notify()
         RETURNS trigger AS $$
         DECLARE
             payload text;
+            encoded_message text;
+            epoch text;
         BEGIN
-            IF octet_length(NEW.message) <= 7168 THEN
-                payload := NEW.id::text || ':' || NEW.channel::text || ':' || encode(NEW.message, 'base64') || ':' || extract(epoch from NEW.expire)::text;
+            encoded_message := encode(NEW.message, 'base64');
+            epoch := extract(epoch from NEW.expire)::text;
+            IF octet_length(NEW.id::text) + octet_length(NEW.channel::text) + octet_length(encoded_message) + octet_length(epoch) + 3 <= 8000 THEN
+                payload := NEW.id::text || ':' || NEW.channel::text || ':' || encoded_message || ':' || epoch;
             ELSE
                 payload := NEW.id::text || ':' || NEW.channel::text;
             END IF;
