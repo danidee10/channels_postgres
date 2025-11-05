@@ -117,7 +117,6 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
         Listens for messages in all channels from the database
         and sends them to the respective queue(s)
         """
-
         # Retrieve all non-expired messages for all channels from the database
         # and send them to the respective queues
         # The results need to be ordered by id
@@ -220,7 +219,7 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
 
             split_payload = event_payload.split(':')
 
-            # Smaller messages (7168 bytes or less) are available in the queue directly and
+            # Smaller messages (> 8000 bytes) are available in the queue directly and
             # don't need to be fetched from the database.
             # Also, the message doesn't need to be deleted from the database immediately because:
             # 1. We never retrieve expired messages from the database.
