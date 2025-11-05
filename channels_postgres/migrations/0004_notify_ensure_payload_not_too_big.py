@@ -9,6 +9,8 @@ class Migration(migrations.Migration):
 
     # Postgres' NOTIFY messages are limited to 8000 bytes, so we can't always send the whole message
     # in the payload.
+    
+    # +3 is added to 8000 bytes comparison to account for the three colon separators in id:channel:encoded_message:epoch
     setup_database_sql = """
         CREATE OR REPLACE FUNCTION channels_postgres_notify()
         RETURNS trigger AS $$
