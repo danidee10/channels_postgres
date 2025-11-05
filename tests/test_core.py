@@ -3,6 +3,7 @@
 import asyncio
 import random
 import typing
+from unittest.mock import patch
 
 import async_timeout
 import django
@@ -20,6 +21,7 @@ from django.db.backends.postgresql.base import (  # noqa: E402  pylint: disable=
 )
 
 from channels_postgres.core import PostgresChannelLayer  # noqa: E402  pylint: disable=C0411,C0413
+from channels_postgres.db import DatabaseLayer  # noqa: E402  pylint: disable=C0411,C0413
 
 default_layer_config: dict[str, typing.Any] = {
     'prefix': 'asgi',
@@ -551,22 +553,57 @@ def test_custom_group_key_format() -> None:
 
 
 @pytest.mark.asyncio
-async def test_almost_too_big_message(channel_layer: PostgresChannelLayer) -> None:
-    """Makes sure we can send a big message and receive it."""
-    text = random.randbytes(7_000) # PostgreSQL has a limit of 8000 bytes
-    await channel_layer.send('test-channel-1', {'type': 'test.message', 'text': text})
-    message = await channel_layer.receive('test-channel-1')
+async def test_small_message(channel_layer: PostgresChannelLayer) -> None:
+    """
+    Makes sure we can send a message smaller than 8000 bytes and receive it.
 
-    assert message['type'] == 'test.message'
-    assert message['text'] == text
+    without INSERTING and retrieving the message from the database.
+    The message should be sent directly via `pg_notify`.
+    """
+    text = random.randbytes(7_000)
+    task = create_task(channel_layer.receive('test-channel-1'))
+
+    async def chained_tasks() -> None:
+        await asyncio.sleep(1)
+        await channel_layer.send('test-channel-1', {'type': 'test.message', 'text': text})
+
+    with patch.object(
+        DatabaseLayer,
+        'delete_message_returning_message',
+        autospec=True,
+        wraps=DatabaseLayer.delete_message_returning_message,
+    ) as spy_delete_message_returning_message:
+        await asyncio.wait([task, create_task(chained_tasks())])
+        message = task.result()
+
+        spy_delete_message_returning_message.assert_not_called()
+        assert message['type'] == 'test.message'
+        assert message['text'] == text
 
 
-@pytest.mark.asyncio
 async def test_big_message(channel_layer: PostgresChannelLayer) -> None:
-    """Makes sure we can send a message bigger than `8000` bytes and receive it."""
-    text = random.randbytes(10_000) # PostgreSQL has a limit of 8000 bytes
-    await channel_layer.send('test-channel-1', {'type': 'test.message', 'text': text})
-    message = await channel_layer.receive('test-channel-1')
+    """
+    Makes sure we can send a message bigger than `8000` bytes and receive it.
 
-    assert message['type'] == 'test.message'
-    assert message['text'] == text
+    Postgres has a limit of 8000 bytes for NOTIFY messages.
+    So the message should be inserted into the database and then retrieved.
+    """
+    text = random.randbytes(10_000)
+    task = create_task(channel_layer.receive('test-channel-1'))
+
+    async def chained_tasks() -> None:
+        await asyncio.sleep(1)
+        await channel_layer.send('test-channel-1', {'type': 'test.message', 'text': text})
+
+    with patch.object(
+        DatabaseLayer,
+        'delete_message_returning_message',
+        autospec=True,
+        wraps=DatabaseLayer.delete_message_returning_message,
+    ) as spy_delete_message_returning_message:
+        await asyncio.wait([task, create_task(chained_tasks())])
+        message = task.result()
+
+        spy_delete_message_returning_message.assert_called_once()
+        assert message['type'] == 'test.message'
+        assert message['text'] == text

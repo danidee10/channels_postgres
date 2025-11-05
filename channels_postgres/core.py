@@ -220,7 +220,7 @@ class PostgresChannelLayer(BaseChannelLayer):  # type: ignore  # pylint: disable
 
             split_payload = event_payload.split(':')
 
-            # Smaller messages (7168 bytes or less) are available in the queue directly and
+            # Smaller messages (> 8000 bytes) are available in the queue directly and
             # don't need to be fetched from the database.
             # Also, the message doesn't need to be deleted from the database immediately because:
             # 1. We never retrieve expired messages from the database.
