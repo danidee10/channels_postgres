@@ -3,6 +3,7 @@
 import asyncio
 import random
 import typing
+from unittest.mock import patch
 
 import async_timeout
 import django
@@ -43,10 +44,10 @@ async def shutdown_listener() -> typing.AsyncGenerator[None, None]:
     db_params.pop('context')
     conn_info = psycopg.conninfo.make_conninfo(conninfo='', **db_params)
     async with await psycopg.AsyncConnection.connect(conninfo=conn_info, autocommit=True) as conn:
-        await conn.execute("NOTIFY channels_postgres_message, '1:shutdown';")
+        await conn.execute("NOTIFY channels_postgres_messages, '1:shutdown';")
 
 
-@pytest.fixture(name='channel_layer', autouse=True)
+@pytest.fixture(name='channel_layer')
 async def channel_layer_fixture() -> typing.AsyncGenerator[PostgresChannelLayer, None]:
     """Channel layer fixture that flushes automatically."""
     db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
@@ -130,11 +131,12 @@ async def test_send_received(channel_layer: PostgresChannelLayer) -> None:
     assert message['text'] == 'Hello world!'
 
 
-@pytest.mark.parametrize('channel_layer', [None])  # Fixture can't handle sync
-def test_double_receive(channel_layer: PostgresChannelLayer) -> None:
+def test_double_receive() -> None:
     """
     Makes sure we can receive from two different event loops using
     process-local channel names.
+
+    We can't reuse the channel_layer fixture here because it's async
     """
     db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
     assert db_params is not None
@@ -317,11 +319,7 @@ async def test_message_expiry__earliest_message_expires(
     """
     expiry = 3
     delay = 2
-    db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
-    assert db_params is not None
-
-    default_layer_config['expiry'] = expiry
-    channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
+    channel_layer.expiry = expiry
     channel_name = await channel_layer.new_channel()
 
     task = asyncio.ensure_future(send_three_messages_with_delay(channel_name, channel_layer, delay))
@@ -343,7 +341,9 @@ async def test_message_expiry__earliest_message_expires(
 
 
 @pytest.mark.asyncio
-async def test_message_expiry__all_messages_under_expiration_time() -> None:
+async def test_message_expiry__all_messages_under_expiration_time(
+    channel_layer: PostgresChannelLayer,
+) -> None:
     """
     Tests message expiry
 
@@ -351,11 +351,7 @@ async def test_message_expiry__all_messages_under_expiration_time() -> None:
     """
     expiry = 3
     delay = 1
-    db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
-    assert db_params is not None
-
-    default_layer_config['expiry'] = expiry
-    channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
+    channel_layer.expiry = expiry
     channel_name = await channel_layer.new_channel()
 
     task = asyncio.ensure_future(send_three_messages_with_delay(channel_name, channel_layer, delay))
@@ -376,7 +372,7 @@ async def test_message_expiry__all_messages_under_expiration_time() -> None:
 
 
 @pytest.mark.asyncio
-async def test_message_expiry__group_send() -> None:
+async def test_message_expiry__group_send(channel_layer: PostgresChannelLayer) -> None:
     """
     Tests group messages expiry
 
@@ -384,11 +380,7 @@ async def test_message_expiry__group_send() -> None:
     """
     expiry = 3
     delay = 2
-    db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
-    assert db_params is not None
-
-    default_layer_config['expiry'] = expiry
-    channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
+    channel_layer.expiry = expiry
     channel_name = await channel_layer.new_channel()
 
     await channel_layer.group_add('test-group', channel_name)
@@ -414,7 +406,9 @@ async def test_message_expiry__group_send() -> None:
 
 
 @pytest.mark.asyncio
-async def test_message_expiry__group_send__one_channel_expires_message() -> None:
+async def test_message_expiry__group_send__one_channel_expires_message(
+    channel_layer: PostgresChannelLayer,
+) -> None:
     """
     Tests group messages expiry
 
@@ -422,12 +416,7 @@ async def test_message_expiry__group_send__one_channel_expires_message() -> None
     """
     expiry = 4
     delay = 1
-
-    db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
-    assert db_params is not None
-
-    default_layer_config['expiry'] = expiry
-    channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
+    channel_layer.expiry = expiry
     channel_1 = await channel_layer.new_channel()
     channel_2 = await channel_layer.new_channel(prefix='channel_2')
 
@@ -524,49 +513,81 @@ async def test_guarantee_at_most_once_delivery() -> None:
         async with async_timeout.timeout(1):
             await future_channel_layer
 
+    await channel_layer.flush()
+    await channel_layer_2.flush()
 
-def test_default_group_key_format() -> None:
+
+def test_default_group_key_format(channel_layer: PostgresChannelLayer) -> None:
     """
     Tests the default group key format.
     """
-    db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
-    assert db_params is not None
-
-    channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
     group_name = channel_layer._group_key('test_group')  # pylint: disable=W0212
     assert group_name == 'asgi:group:test_group'
 
 
-def test_custom_group_key_format() -> None:
+def test_custom_group_key_format(channel_layer: PostgresChannelLayer) -> None:
     """
     Tests the custom group key format.
     """
-    db_params: dict[str, typing.Any] | None = settings.DATABASES.get('channels_postgres', None)
-    assert db_params is not None
+    channel_layer.prefix = 'test_prefix'
 
-    default_layer_config['prefix'] = 'test_prefix'
-    channel_layer = PostgresChannelLayer(**default_layer_config, **db_params)
     group_name = channel_layer._group_key('test_group')  # pylint: disable=W0212
     assert group_name == 'test_prefix:group:test_group'
 
 
 @pytest.mark.asyncio
-async def test_almost_too_big_message(channel_layer: PostgresChannelLayer) -> None:
-    """Makes sure we can send a big message and receive it."""
-    text = random.randbytes(7_000) # PostgreSQL has a limit of 8000 bytes
-    await channel_layer.send('test-channel-1', {'type': 'test.message', 'text': text})
-    message = await channel_layer.receive('test-channel-1')
+async def test_small_message(channel_layer: PostgresChannelLayer) -> None:
+    """
+    Makes sure we can send a message smaller than 8000 bytes and receive it.
 
-    assert message['type'] == 'test.message'
-    assert message['text'] == text
+    without INSERTING and retrieving the message from the database.
+    The message should be sent directly via `pg_notify`.
+    """
+    channel_name = await channel_layer.new_channel()
+    text = random.randbytes(1_000)
+
+    async def chained_tasks() -> None:
+        await asyncio.sleep(1)
+        await channel_layer.send(channel_name, {'type': 'test.message', 'text': text})
+
+    with patch.object(
+        channel_layer.django_db,
+        'delete_message_returning_message',
+        wraps=channel_layer.django_db.delete_message_returning_message,
+    ) as spy_delete_message_returning_message:
+        task = create_task(channel_layer.receive(channel_name))
+        await asyncio.wait([task, create_task(chained_tasks())])
+        message = task.result()
+
+        spy_delete_message_returning_message.assert_not_called()
+        assert message['type'] == 'test.message'
+        assert message['text'] == text
 
 
 @pytest.mark.asyncio
 async def test_big_message(channel_layer: PostgresChannelLayer) -> None:
-    """Makes sure we can send a message bigger than `8000` bytes and receive it."""
-    text = random.randbytes(10_000) # PostgreSQL has a limit of 8000 bytes
-    await channel_layer.send('test-channel-1', {'type': 'test.message', 'text': text})
-    message = await channel_layer.receive('test-channel-1')
+    """
+    Makes sure we can send a message bigger than `8000` bytes and receive it.
 
-    assert message['type'] == 'test.message'
-    assert message['text'] == text
+    Postgres has a limit of 8000 bytes for NOTIFY messages.
+    So the message should be inserted into the database and then retrieved.
+    """
+    channel_name = await channel_layer.new_channel()
+    text = random.randbytes(10_000)
+
+    async def chained_tasks() -> None:
+        await asyncio.sleep(1)
+        await channel_layer.send(channel_name, {'type': 'test.message', 'text': text})
+
+    with patch.object(
+        channel_layer.django_db,
+        'delete_message_returning_message',
+        wraps=channel_layer.django_db.delete_message_returning_message,
+    ) as spy_delete_message_returning_message:
+        task = create_task(channel_layer.receive(channel_name))
+        await asyncio.wait([task, create_task(chained_tasks())])
+        message = task.result()
+
+        spy_delete_message_returning_message.assert_called_once()
+        assert message['type'] == 'test.message'
+        assert message['text'] == text

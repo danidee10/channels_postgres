@@ -6,7 +6,6 @@ on:
 jobs:
   release:
     name: Tag and create github release
-    needs: upload-coverage
     runs-on: ubuntu-22.04
     permissions:
       contents: write # to be able to publish a GitHub release
